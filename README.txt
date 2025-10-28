@@ -18,7 +18,3 @@ References:
 [2] W. C. Chew, "Lecture 37: Finite Difference Method, Yee Algorithm,"
     ECE 604, Purdue University, 2020.
     URL: https://engineering.purdue.edu/wcchew/ece604s20/Lecture%20Notes/Lect37.pdf
-
-Notes:
-------
-Developed for educational purposes at age 17. Closely mirrors the referenced methods with little regard for performance, extensibility, or advanced features (e.g., absorbing boundaries, material variation).
