@@ -4,13 +4,33 @@
 #include <stdlib.h>
 #include <string.h>
 
-const double vacuum_permeability = 4.0 * M_PI * 1e-7;  // μ₀ in H/m
-const double vacuum_permittivity = 8.85418782e-12;     // ε₀ in F/m
+#ifndef M_PI
+#    define M_PI 3.14159265358979323846
+#endif
+
+const double vacuum_permeability = 4.0 * M_PI * 1e-7;
+const double vacuum_permittivity = 8.85418782e-12;
+
+typedef struct {
+    double x, y, z;
+} dvec3;
+
+typedef struct {
+    int x, y, z;
+} ivec3;
+
+double sx, sy, sz;
+
+int res = 0;
 
 double *field_mem  = NULL;
-int     cell_count = 0;
+int     cell_count = -1;
+size_t  total_size = -1;
 
 int nx = 0, ny = 0, nz = 0;
+int stride_x = 0;
+int stride_y = 0;
+int stride_z = 0;
 
 double *Ex, *Ey, *Ez;
 double *Bx, *By, *Bz;
@@ -21,22 +41,47 @@ double dt = 0;
 double dx = 0, dy = 0, dz = 0;
 double simulation_time = 0;
 
-int stride_x = 0;
-int stride_y = 0;
-int stride_z = 0;
+ivec3 pos_to_cell(const double pos[3]) {
+    return (ivec3) {
+        (int) (pos[0] * res),
+        (int) (pos[1] * res),
+        (int) (pos[2] * res)
+    };
+}
 
-void alloc_field(int x_dim, int y_dim, int z_dim) {
-    nx = x_dim + 1;
-    ny = y_dim + 1;
-    nz = z_dim + 1;
+void alloc_grid();  // forward dec
 
-    cell_count        = nx * ny * nz;
-    size_t total_size = cell_count * 8 * sizeof(double);
-    field_mem         = (double *) malloc(total_size);
-    if (!field_mem) {
-        fprintf(stderr, "Memory allocation failed\n");
+void init_simulation(double size_x, double size_y, double size_z, int resolution) {
+    if (size_x <= 0 || size_y <= 0 || size_z <= 0 || resolution < 1) {
+        fprintf(stderr, "Invalid Simulation parameters\n");
         exit(1);
     }
+    res = resolution;
+    nx  = round(size_x * res);
+    ny  = round(size_y * res);
+    nz  = round(size_z * res);
+    alloc_grid();
+    printf("Created simulation of domain size {%f, %f, %f}\n", nx / (float) res, ny / (float) res, nz / (float) res);
+}
+
+void alloc_grid() {
+    if (field_mem || nx < 1 || ny < 1 || nz < 1) {
+        fprintf(stderr, "allocator: Allocation failed, invalid parameters\n");
+        exit(1);
+    }
+
+    stride_x = ny * nz;
+    stride_y = nz;
+    stride_z = 1;
+
+    cell_count = nx * ny * nz;
+    total_size = cell_count * 8 * sizeof(double);
+    field_mem  = (double *) malloc(total_size);
+    if (!field_mem) {
+        fprintf(stderr, "allocator: Allocation failed, system returned nullptr\n");
+        exit(1);
+    }
+    printf("allocator: Allocated grid of %fMB\n", total_size / (float) (1024 * 1024));
     memset(field_mem, 0, total_size);
 
     Ex  = field_mem;
@@ -53,17 +98,18 @@ void alloc_field(int x_dim, int y_dim, int z_dim) {
         *(eps + i) = vacuum_permittivity;
         *(mu + i)  = vacuum_permeability;
     }
-
-    stride_x = ny * nz;
-    stride_y = nz;
-    stride_z = 1;
 }
 
 void free_field() {
     if (field_mem) {
         free(field_mem);
         field_mem = NULL;
+        printf("allocator: Grid memory freed\n");
     }
+}
+
+void destroy_simulation() {
+    free_field();
 }
 
 void update_E(double time_step) {
@@ -156,5 +202,6 @@ void apply_PEC_border_condition() {
     }
 }
 
-int main() {
-}
+void apply_point_charge(dvec3 position) {}
+
+void inact_current(dvec3 position) {}
