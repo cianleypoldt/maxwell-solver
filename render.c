@@ -5,6 +5,15 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+// max field magnitudes for color mapping
+const double E_max = 1;
+const double B_max = 1;
+
+typedef struct VoxelData {
+    float magE2, magB2;
+    float eps, mu;
+} voxel_data;
+
 simctx     *sim    = NULL;
 GLFWwindow *window = NULL;
 int         w, h;
@@ -15,6 +24,8 @@ GLint iTimeLocation       = 0;
 GLint iResolutionLocation = 0;
 
 GLuint ssbo = 0;
+
+voxel_data *voxels = NULL;
 
 char  *readFile(const char *path);
 GLuint create_shader_program(const char *vertexSrc, const char *fragmentSrc);
@@ -55,16 +66,24 @@ void start_renderer(simctx *ctx) {
     iTimeLocation       = glGetUniformLocation(volumetric_shader_prog, "iTime");
     iResolutionLocation = glGetUniformLocation(volumetric_shader_prog, "iResolution");
 
+    voxels = malloc(ctx->cell_count);
+    for (int i = 0; i < ctx->cell_count; i++) {
+        voxels[i].eps = ctx->eps[i];
+    }
+    for (int i = 0; i < ctx->cell_count; i++) {
+        voxels[i].mu = ctx->mu[i];
+    }
+
     glGenBuffers(1, &ssbo);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo);
-
-    glBufferStorage(GL_SHADER_STORAGE_BUFFER, ctx->cell_count * BYTES_PER_CELL, NULL, GL_MAP_WRITE_BIT | GL_MAP_PERSISTENT_BIT | GL_MAP_COHERENT_BIT | GL_DYNAMIC_STORAGE_BIT);
-
-    void *mapped = glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, ctx->cell_count * BYTES_PER_CELL, GL_MAP_WRITE_BIT | GL_MAP_PERSISTENT_BIT | GL_MAP_COHERENT_BIT);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, ctx->cell_count * sizeof(voxel_data), voxels, GL_DYNAMIC_DRAW);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, ssbo);
 }
 
 void quit_renderer() {
+    if (voxels) {
+        free(voxels);
+    }
     glDeleteProgram(volumetric_shader_prog);
     glfwDestroyWindow(window);
     glfwTerminate();
@@ -79,14 +98,28 @@ int should_close() {
     return glfwWindowShouldClose(window) || glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS;
 }
 
+void lattice_to_buffer(simctx *ctx) {
+    double *field = ctx->Ex;
+    double  emax2 = E_max * E_max;  // normalize color values for color mapping
+    for (int component = 0; component < 3; component++) {
+        for (int i = 0; i < ctx->cell_count; i++) {
+            voxels[i].magE2 += (*field + *(field++)) / emax2;
+        }
+    }
+    double bmax2 = B_max * B_max;
+    for (int component = 0; component < 3; component++) {
+        for (int i = 0; i < ctx->cell_count; i++) {
+            voxels[i].magB2 += (*field + *(field++)) / bmax2;
+        }
+    }
+}
+
 void update() {
     float time = (float) glfwGetTime();
     int   width, height;
     glfwGetFramebufferSize(window, &width, &height);
     glUniform1f(iTimeLocation, time);
     glUniform2f(iResolutionLocation, (float) width, (float) height);
-    // ensure shader reads the new data
-    glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_VERTEX_ATTRIB_ARRAY_BARRIER_BIT);
 }
 
 void draw() {

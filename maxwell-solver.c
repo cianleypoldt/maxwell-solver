@@ -64,10 +64,9 @@ void alloc_grid(simctx *ctx) {
     ctx->eps = ctx->Bz + ctx->cell_count;
     ctx->mu  = ctx->eps + ctx->cell_count;
 
-    // initialize eps and mu
     for (int i = 0; i < ctx->cell_count; i++) {
-        *(ctx->eps + i) = vacuum_permittivity;
-        *(ctx->mu + i)  = vacuum_permeability;
+        *(ctx->eps + i) = 1;
+        *(ctx->mu + i)  = 1;
     }
 }
 
@@ -84,15 +83,15 @@ void destroy_simulation(simctx *ctx) {
     free(ctx);
 }
 
-void update_E(simctx *ctx) {
+void update_E(simctx *ctx, double time_step) {
     // first and last E field layers updated later on as PEC boundary, index initialized at E_*[1, 1, 1]
     int idx = ctx->stride_z + ctx->stride_x + ctx->stride_y;
     for (int i = 1; i < ctx->nx - 1; i++) {
         for (int j = 1; j < ctx->ny - 1; j++) {
             for (int k = 1; k < ctx->nz - 1; k++) {
-                ctx->Ex[idx] += ctx->dt * ((ctx->Bz[idx] - ctx->Bz[idx - ctx->stride_y]) / ctx->dy - (ctx->By[idx] - ctx->By[idx - ctx->stride_z]) / ctx->dz) / ctx->eps[idx];
-                ctx->Ey[idx] += ctx->dt * ((ctx->Bx[idx] - ctx->Bx[idx - ctx->stride_z]) / ctx->dz - (ctx->Bz[idx] - ctx->Bz[idx - ctx->stride_x]) / ctx->dx) / ctx->eps[idx];
-                ctx->Ez[idx] += ctx->dt * ((ctx->By[idx] - ctx->By[idx - ctx->stride_x]) / ctx->dx - (ctx->Bx[idx] - ctx->Bx[idx - ctx->stride_y]) / ctx->dy) / ctx->eps[idx];
+                ctx->Ex[idx] += time_step * ((ctx->Bz[idx] - ctx->Bz[idx - ctx->stride_y]) / ctx->dy - (ctx->By[idx] - ctx->By[idx - ctx->stride_z]) / ctx->dz) / ctx->eps[idx];
+                ctx->Ey[idx] += time_step * ((ctx->Bx[idx] - ctx->Bx[idx - ctx->stride_z]) / ctx->dz - (ctx->Bz[idx] - ctx->Bz[idx - ctx->stride_x]) / ctx->dx) / ctx->eps[idx];
+                ctx->Ez[idx] += time_step * ((ctx->By[idx] - ctx->By[idx - ctx->stride_x]) / ctx->dx - (ctx->Bx[idx] - ctx->Bx[idx - ctx->stride_y]) / ctx->dy) / ctx->eps[idx];
                 idx++;
             }
             idx += 2;              // skip PEC boundaries @ z = 0 and z = grid_dim_z - 1
@@ -101,15 +100,15 @@ void update_E(simctx *ctx) {
     }
 }
 
-void update_B(simctx *ctx) {
+void update_B(simctx *ctx, double time_step) {
     // rear B field layers are buffers (-> for grid_dim_* - 1)
     int idx = 0;
     for (int i = 0; i < ctx->nx - 1; i++) {
         for (int j = 0; j < ctx->ny - 1; j++) {
             for (int k = 0; k < ctx->nz - 1; k++) {
-                ctx->Bx[idx] -= ctx->dt * ((ctx->Ez[idx + ctx->stride_y] - ctx->Ez[idx]) / ctx->dy - (ctx->Ey[idx + ctx->stride_z] - ctx->Ey[idx]) / ctx->dz) / ctx->mu[idx];
-                ctx->By[idx] -= ctx->dt * ((ctx->Ex[idx + ctx->stride_z] - ctx->Ex[idx]) / ctx->dz - (ctx->Ez[idx + ctx->stride_x] - ctx->Ez[idx]) / ctx->dx) / ctx->mu[idx];
-                ctx->Bz[idx] -= ctx->dt * ((ctx->Ey[idx + ctx->stride_x] - ctx->Ey[idx]) / ctx->dx - (ctx->Ex[idx + ctx->stride_y] - ctx->Ex[idx]) / ctx->dy) / ctx->mu[idx];
+                ctx->Bx[idx] -= time_step * ((ctx->Ez[idx + ctx->stride_y] - ctx->Ez[idx]) / ctx->dy - (ctx->Ey[idx + ctx->stride_z] - ctx->Ey[idx]) / ctx->dz) / ctx->mu[idx];
+                ctx->By[idx] -= time_step * ((ctx->Ex[idx + ctx->stride_z] - ctx->Ex[idx]) / ctx->dz - (ctx->Ez[idx + ctx->stride_x] - ctx->Ez[idx]) / ctx->dx) / ctx->mu[idx];
+                ctx->Bz[idx] -= time_step * ((ctx->Ey[idx + ctx->stride_x] - ctx->Ey[idx]) / ctx->dx - (ctx->Ex[idx + ctx->stride_y] - ctx->Ex[idx]) / ctx->dy) / ctx->mu[idx];
                 idx++;
             }
             idx++;             // skip B field-buffer
