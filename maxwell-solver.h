@@ -41,7 +41,10 @@ typedef struct SimulationContext {
 
 } simctx;
 
-simctx *init_simulation(double size_x, double size_y, double size_z, int resolution);
+simctx *init_simulation(double size_x,
+                        double size_y,
+                        double size_z,
+                        int    resolution);
 void    destroy_simulation(simctx *ctx);
 
 void apply_point_charge(simctx *ctx, dvec3 position);

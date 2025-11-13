@@ -10,16 +10,16 @@ const double vacuum_permeability = 4.0 * M_PI * 1e-7;
 const double vacuum_permittivity = 8.85418782e-12;
 
 ivec3 pos_to_cell(simctx *sim, const double pos[3]) {
-    return (ivec3) {
-        (int) (pos[0] * sim->res),
-        (int) (pos[1] * sim->res),
-        (int) (pos[2] * sim->res)
-    };
+    return (ivec3) { (int) (pos[0] * sim->res), (int) (pos[1] * sim->res),
+                     (int) (pos[2] * sim->res) };
 }
 
 void alloc_grid(simctx *ctx);  // forward dec
 
-simctx *init_simulation(double size_x, double size_y, double size_z, int resolution) {
+simctx *init_simulation(double size_x,
+                        double size_y,
+                        double size_z,
+                        int    resolution) {
     if (size_x <= 0 || size_y <= 0 || size_z <= 0 || resolution < 1) {
         fprintf(stderr, "Invalid Simulation parameters\n");
         exit(1);
@@ -31,7 +31,9 @@ simctx *init_simulation(double size_x, double size_y, double size_z, int resolut
     ctx->ny  = round(size_y * ctx->res);
     ctx->nz  = round(size_z * ctx->res);
     alloc_grid(ctx);
-    printf("Created simulation of domain size {%f, %f, %f}\n", ctx->nx / (float) ctx->res, ctx->ny / (float) ctx->res, ctx->nz / (float) ctx->res);
+    printf("Created simulation of domain size {%f, %f, %f}\n",
+           ctx->nx / (float) ctx->res, ctx->ny / (float) ctx->res,
+           ctx->nz / (float) ctx->res);
     return ctx;
 }
 
@@ -49,10 +51,12 @@ void alloc_grid(simctx *ctx) {
     ctx->total_size = ctx->cell_count * BYTES_PER_CELL;
     ctx->field_mem  = (double *) malloc(ctx->total_size);
     if (!ctx->field_mem) {
-        fprintf(stderr, "allocator: Allocation failed, system returned nullptr\n");
+        fprintf(stderr,
+                "allocator: Allocation failed, system returned nullptr\n");
         exit(1);
     }
-    printf("allocator: Allocated grid of %fMB\n", ctx->total_size / (float) (1024 * 1024));
+    printf("allocator: Allocated grid of %fMB\n",
+           ctx->total_size / (float) (1024 * 1024));
     memset(ctx->field_mem, 0, ctx->total_size);
 
     ctx->Ex  = ctx->field_mem;
@@ -89,14 +93,28 @@ void update_E(simctx *ctx, double time_step) {
     for (int i = 1; i < ctx->nx - 1; i++) {
         for (int j = 1; j < ctx->ny - 1; j++) {
             for (int k = 1; k < ctx->nz - 1; k++) {
-                ctx->Ex[idx] += time_step * ((ctx->Bz[idx] - ctx->Bz[idx - ctx->stride_y]) / ctx->dy - (ctx->By[idx] - ctx->By[idx - ctx->stride_z]) / ctx->dz) / ctx->eps[idx];
-                ctx->Ey[idx] += time_step * ((ctx->Bx[idx] - ctx->Bx[idx - ctx->stride_z]) / ctx->dz - (ctx->Bz[idx] - ctx->Bz[idx - ctx->stride_x]) / ctx->dx) / ctx->eps[idx];
-                ctx->Ez[idx] += time_step * ((ctx->By[idx] - ctx->By[idx - ctx->stride_x]) / ctx->dx - (ctx->Bx[idx] - ctx->Bx[idx - ctx->stride_y]) / ctx->dy) / ctx->eps[idx];
+                ctx->Ex[idx] +=
+                    time_step *
+                    ((ctx->Bz[idx] - ctx->Bz[idx - ctx->stride_y]) / ctx->dy -
+                     (ctx->By[idx] - ctx->By[idx - ctx->stride_z]) / ctx->dz) /
+                    ctx->eps[idx];
+                ctx->Ey[idx] +=
+                    time_step *
+                    ((ctx->Bx[idx] - ctx->Bx[idx - ctx->stride_z]) / ctx->dz -
+                     (ctx->Bz[idx] - ctx->Bz[idx - ctx->stride_x]) / ctx->dx) /
+                    ctx->eps[idx];
+                ctx->Ez[idx] +=
+                    time_step *
+                    ((ctx->By[idx] - ctx->By[idx - ctx->stride_x]) / ctx->dx -
+                     (ctx->Bx[idx] - ctx->Bx[idx - ctx->stride_y]) / ctx->dy) /
+                    ctx->eps[idx];
                 idx++;
             }
-            idx += 2;              // skip PEC boundaries @ z = 0 and z = grid_dim_z - 1
+            idx += 2;  // skip PEC boundaries @ z = 0 and z = grid_dim_z - 1
         }
-        idx += 2 * ctx->stride_y;  // skip PEC boundaries @ y = 0 and y = grid_dim_y - 1
+        idx +=
+            2 *
+            ctx->stride_y;  // skip PEC boundaries @ y = 0 and y = grid_dim_y - 1
     }
 }
 
@@ -106,9 +124,21 @@ void update_B(simctx *ctx, double time_step) {
     for (int i = 0; i < ctx->nx - 1; i++) {
         for (int j = 0; j < ctx->ny - 1; j++) {
             for (int k = 0; k < ctx->nz - 1; k++) {
-                ctx->Bx[idx] -= time_step * ((ctx->Ez[idx + ctx->stride_y] - ctx->Ez[idx]) / ctx->dy - (ctx->Ey[idx + ctx->stride_z] - ctx->Ey[idx]) / ctx->dz) / ctx->mu[idx];
-                ctx->By[idx] -= time_step * ((ctx->Ex[idx + ctx->stride_z] - ctx->Ex[idx]) / ctx->dz - (ctx->Ez[idx + ctx->stride_x] - ctx->Ez[idx]) / ctx->dx) / ctx->mu[idx];
-                ctx->Bz[idx] -= time_step * ((ctx->Ey[idx + ctx->stride_x] - ctx->Ey[idx]) / ctx->dx - (ctx->Ex[idx + ctx->stride_y] - ctx->Ex[idx]) / ctx->dy) / ctx->mu[idx];
+                ctx->Bx[idx] -=
+                    time_step *
+                    ((ctx->Ez[idx + ctx->stride_y] - ctx->Ez[idx]) / ctx->dy -
+                     (ctx->Ey[idx + ctx->stride_z] - ctx->Ey[idx]) / ctx->dz) /
+                    ctx->mu[idx];
+                ctx->By[idx] -=
+                    time_step *
+                    ((ctx->Ex[idx + ctx->stride_z] - ctx->Ex[idx]) / ctx->dz -
+                     (ctx->Ez[idx + ctx->stride_x] - ctx->Ez[idx]) / ctx->dx) /
+                    ctx->mu[idx];
+                ctx->Bz[idx] -=
+                    time_step *
+                    ((ctx->Ey[idx + ctx->stride_x] - ctx->Ey[idx]) / ctx->dx -
+                     (ctx->Ex[idx + ctx->stride_y] - ctx->Ex[idx]) / ctx->dy) /
+                    ctx->mu[idx];
                 idx++;
             }
             idx++;             // skip B field-buffer

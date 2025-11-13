@@ -63,8 +63,9 @@ void start_renderer(simctx *ctx) {
 
     glUseProgram(volumetric_shader_prog);
 
-    iTimeLocation       = glGetUniformLocation(volumetric_shader_prog, "iTime");
-    iResolutionLocation = glGetUniformLocation(volumetric_shader_prog, "iResolution");
+    iTimeLocation = glGetUniformLocation(volumetric_shader_prog, "iTime");
+    iResolutionLocation =
+        glGetUniformLocation(volumetric_shader_prog, "iResolution");
 
     voxels = malloc(ctx->cell_count);
     for (int i = 0; i < ctx->cell_count; i++) {
@@ -76,7 +77,8 @@ void start_renderer(simctx *ctx) {
 
     glGenBuffers(1, &ssbo);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo);
-    glBufferData(GL_SHADER_STORAGE_BUFFER, ctx->cell_count * sizeof(voxel_data), voxels, GL_DYNAMIC_DRAW);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, ctx->cell_count * sizeof(voxel_data),
+                 voxels, GL_DYNAMIC_DRAW);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, ssbo);
 }
 
@@ -95,7 +97,8 @@ void clear_screen() {
 
 int should_close() {
     glfwPollEvents();
-    return glfwWindowShouldClose(window) || glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS;
+    return glfwWindowShouldClose(window) ||
+           glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS;
 }
 
 void lattice_to_buffer(simctx *ctx) {
@@ -162,8 +165,10 @@ GLuint compile_shader(GLenum type, const char *source) {
     if (!success) {
         char infoLog[512];
         glGetShaderInfoLog(shader, 512, NULL, infoLog);
-        const char *typeName = (type == GL_VERTEX_SHADER) ? "VERTEX" : "FRAGMENT";
-        fprintf(stderr, "ERROR::SHADER::%s::COMPILATION_FAILED\n%s\n", typeName, infoLog);
+        const char *typeName =
+            (type == GL_VERTEX_SHADER) ? "VERTEX" : "FRAGMENT";
+        fprintf(stderr, "ERROR::SHADER::%s::COMPILATION_FAILED\n%s\n", typeName,
+                infoLog);
     }
 
     return shader;
