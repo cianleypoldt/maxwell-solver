@@ -45,15 +45,14 @@ simctx *init_simulation(double size_x,
                         double size_y,
                         double size_z,
                         int    resolution);
-void    destroy_simulation(simctx *ctx);
 
 void apply_point_charge(simctx *ctx, dvec3 position);
 void apply_point_current(simctx *ctx, dvec3 position);
 
+void destroy_simulation(simctx *ctx);
 // render:
-void start_renderer(simctx *ctx);
+void start_renderer(simctx *ctx, int width, int height);
 void quit_renderer();
-void clear_screen();
 int  should_close();
 void draw();
 

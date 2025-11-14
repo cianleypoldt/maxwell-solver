@@ -2,60 +2,53 @@
 #include "maxwell-solver.h"
 
 #include <GLFW/glfw3.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 
 static const char *vs_src =
     "#version 430 core\n"
-    "layout(location=0) in vec2 aPos; // unit quad [-0.5, -0.5]..[0.5,0.5] or "
-    "(0,0)->(1,1) depending on convention\n"
-    "uniform ivec2 uGridDim; // cols, rows\n"
-    "uniform vec2 uCellSize; // world size of a cell\n"
-    "uniform vec2 uGridOrigin; // world origin of grid (bottom-left)\n"
-    "uniform mat4 uProj; // projection (clip space)\n"
+    "layout(location=0) in vec3 aPos; // cube vertex position [-0.5..0.5]\n"
+    "uniform ivec3 uGridDim; // nx, ny, nz\n"
+    "uniform vec3 uCellSize; // world size of a cell\n"
+    "uniform vec3 uGridOrigin; // world origin of grid (bottom-left-back)\n"
+    "uniform mat4 uView; // view matrix\n"
+    "uniform mat4 uProj; // projection matrix\n"
     "flat out int vInstanceID;\n"
     "void main() {\n"
     " int idx = gl_InstanceID;\n"
-    " int cols = uGridDim.x;\n"
-    " int x = idx % cols;\n"
-    " int y = idx / cols;\n"
-    " // cell center in world-space (adjust if your quad is 0..1 or "
-    "-0.5..0.5)\n"
-    " vec2 cellCenter = uGridOrigin + (vec2(x, y) + vec2(0.5)) * uCellSize;\n"
-    " // aPos is assumed in [-0.5, -0.5]..[0.5,0.5]"
-    " vec2 local = aPos * uCellSize;\n"
-    " vec4 worldPos = vec4(cellCenter + local, 0.0, 1.0);\n"
-    " gl_Position = uProj * worldPos;\n"
+    " int nx = uGridDim.x;\n"
+    " int ny = uGridDim.y;\n"
+    " int nz = uGridDim.z;\n"
+    " // Convert flat index to 3D coordinates (row-major: z*nx*ny + y*nx + x)\n"
+    " int z = idx / (nx * ny);\n"
+    " int rem = idx % (nx * ny);\n"
+    " int y = rem / nx;\n"
+    " int x = rem % nx;\n"
+    " // Cell center in world-space\n"
+    " vec3 cellCenter = uGridOrigin + (vec3(x, y, z) + vec3(0.5)) * "
+    "uCellSize;\n"
+    " // Scale the unit cube by cell size\n"
+    " vec3 local = aPos * uCellSize;\n"
+    " vec4 worldPos = vec4(cellCenter + local, 1.0);\n"
+    " gl_Position = uProj * uView * worldPos;\n"
     " vInstanceID = idx;\n"
     "}\n";
 
 static const char *fs_src =
     "#version 430 core\n"
-    "layout(location=0) out vec3 outAccum; // accum color * weight\n"
-    "layout(location=1) out float outRevealage; // revealage channel\n"
+    "layout(location=0) out vec3 outAccum;\n"
+    "layout(location=1) out float outRevealage;\n"
     "flat in int vInstanceID;\n"
-    "layout(std430, binding=0) buffer Colors { vec3 colors[]; }; // "
-    "per-instance colors\n"
-    "layout(std430, binding=1) buffer Counts { uint counts[]; }; // "
-    "per-instance pixel counters (uint)\n"
-    "uniform float uAlpha; // per-pixel alpha (you can choose coverage-based "
-    "alpha if desired)\n"
+    "layout(std430, binding=0) buffer Colors { vec3 colors[]; };\n"
+    "uniform float uAlpha;\n"
     "void main() {\n"
-    " // Increment per-instance pixel count. Each fragment corresponds to one "
-    "pixel sample (after interpolation and sampling).\n"
-    " atomicAdd(counts[vInstanceID], 1u);\n"
     " vec3 col = colors[vInstanceID];\n"
-    " float alpha = uAlpha; // could incorporate subpixel coverage if "
-    "multisampling or analytic coverage computed in VS\n"
-    " // Weighted blended OIT: output accum = color * alpha, revealage = "
-    "alpha\n"
-    " // The blending setup will add accum across fragments and compute a "
-    "multipicative revealage.\n"
+    " float alpha = uAlpha;\n"
     " outAccum = col * alpha;\n"
     " outRevealage = alpha;\n"
     "}\n";
 
-// composite shader to produce final image from accum & revealage
 static const char *comp_vs_src =
     "#version 430 core\n"
     "const vec2 verts[3] = vec2[3](vec2(-1,-1), vec2(3,-1), vec2(-1,3));\n"
@@ -64,8 +57,8 @@ static const char *comp_vs_src =
 static const char *comp_fs_src =
     "#version 430 core\n"
     "layout(location=0) out vec4 fragColor;\n"
-    "uniform sampler2D uAccumTex; // RGBf (accumulated color * alpha)\n"
-    "uniform sampler2D uRevealTex; // R (revealage or alpha accumulation)"
+    "uniform sampler2D uAccumTex;\n"
+    "uniform sampler2D uRevealTex;\n"
     "void main() {\n"
     " vec2 uv = gl_FragCoord.xy / textureSize(uAccumTex, 0);\n"
     " vec3 accum = texture(uAccumTex, uv).rgb;\n"
@@ -104,7 +97,6 @@ static GLuint link_program(GLuint vs, GLuint fs) {
     return p;
 }
 
-// max field magnitudes for color mapping
 const double E_max = 1;
 const double B_max = 1;
 
@@ -118,61 +110,237 @@ simctx     *sim    = NULL;
 GLFWwindow *window = NULL;
 int         w = 800, h = 600;
 
-GLuint shader_prog = 0;
+GLuint prog      = 0;
+GLuint comp_prog = 0;
 
-GLuint vao         = 0;
-GLuint vbo         = 0;
-GLuint ssbo_colors = 0;
-GLuint fbo         = 0;
-GLuint accumTex = 0, revealTex = 0;
+GLuint      vao             = 0;
+GLuint      vbo             = 0;
+voxel_data *color_ssbo_data = NULL;
+GLuint      ssbo_colors     = 0;
+GLuint      fbo             = 0;
+GLuint      accumTex = 0, revealTex = 0, depthTex = 0;
 
-voxel_data *voxels = NULL;
+GLint locGridDim    = 0;
+GLint locCellSize   = 0;
+GLint locGridOrigin = 0;
+GLint locView       = 0;
+GLint locProj       = 0;
+GLint locAlpha      = 0;
 
-char  *read_file(const char *path);
-GLuint compile_shader(GLenum type, const char *source);
-GLuint create_shader_program(const char *vertexSrc, const char *fragmentSrc);
+// camera state
+float  cam_distance      = 10.0f;
+float  cam_angle_h       = 0.0f;
+float  cam_angle_v       = 0.3f;
+double last_mouse_x      = 0.0;
+double last_mouse_y      = 0.0;
+int    mouse_button_down = 0;
 
-void start_renderer(simctx *ctx) {
+// perspective projection matrix (column-major)
+static void perspective_mat4(float  fov_y,
+                             float  aspect,
+                             float  nearp,
+                             float  farp,
+                             float *out16) {
+    float f = 1.0f / tanf(fov_y * 0.5f);
+
+    out16[0]  = f / aspect;
+    out16[4]  = 0.0f;
+    out16[8]  = 0.0f;
+    out16[12] = 0.0f;
+    out16[1]  = 0.0f;
+    out16[5]  = f;
+    out16[9]  = 0.0f;
+    out16[13] = 0.0f;
+    out16[2]  = 0.0f;
+    out16[6]  = 0.0f;
+    out16[10] = (farp + nearp) / (nearp - farp);
+    out16[14] = (2.0f * farp * nearp) / (nearp - farp);
+    out16[3]  = 0.0f;
+    out16[7]  = 0.0f;
+    out16[11] = -1.0f;
+    out16[15] = 0.0f;
+}
+
+// look-at view matrix (column-major)
+static void lookat_mat4(float  eye_x,
+                        float  eye_y,
+                        float  eye_z,
+                        float  center_x,
+                        float  center_y,
+                        float  center_z,
+                        float  up_x,
+                        float  up_y,
+                        float  up_z,
+                        float *out16) {
+    // Forward vector (from eye to center)
+    float fx    = center_x - eye_x;
+    float fy    = center_y - eye_y;
+    float fz    = center_z - eye_z;
+    float f_len = sqrtf(fx * fx + fy * fy + fz * fz);
+    fx /= f_len;
+    fy /= f_len;
+    fz /= f_len;
+
+    // Right vector (cross product of forward and up)
+    float rx    = fy * up_z - fz * up_y;
+    float ry    = fz * up_x - fx * up_z;
+    float rz    = fx * up_y - fy * up_x;
+    float r_len = sqrtf(rx * rx + ry * ry + rz * rz);
+    rx /= r_len;
+    ry /= r_len;
+    rz /= r_len;
+
+    // Up vector (cross product of right and forward)
+    float ux = ry * fz - rz * fy;
+    float uy = rz * fx - rx * fz;
+    float uz = rx * fy - ry * fx;
+
+    out16[0]  = rx;
+    out16[4]  = ux;
+    out16[8]  = -fx;
+    out16[12] = -(rx * eye_x + ux * eye_y - fx * eye_z);
+    out16[1]  = ry;
+    out16[5]  = uy;
+    out16[9]  = -fy;
+    out16[13] = -(ry * eye_x + uy * eye_y - fy * eye_z);
+    out16[2]  = rz;
+    out16[6]  = uz;
+    out16[10] = -fz;
+    out16[14] = -(rz * eye_x + uz * eye_y - fz * eye_z);
+    out16[3]  = 0.0f;
+    out16[7]  = 0.0f;
+    out16[11] = 0.0f;
+    out16[15] = 1.0f;
+}
+
+// mouse callback for camera control
+static void mouse_button_callback(GLFWwindow *win,
+                                  int         button,
+                                  int         action,
+                                  int         mods) {
+    if (button == GLFW_MOUSE_BUTTON_LEFT) {
+        if (action == GLFW_PRESS) {
+            mouse_button_down = 1;
+            glfwGetCursorPos(win, &last_mouse_x, &last_mouse_y);
+        } else if (action == GLFW_RELEASE) {
+            mouse_button_down = 0;
+        }
+    }
+}
+
+static void cursor_position_callback(GLFWwindow *win,
+                                     double      xpos,
+                                     double      ypos) {
+    if (mouse_button_down) {
+        double dx = xpos - last_mouse_x;
+        double dy = ypos - last_mouse_y;
+        cam_angle_h += dx * 0.01f;
+        cam_angle_v += dy * 0.01f;
+        // Clamp vertical angle
+        if (cam_angle_v > 1.5f) {
+            cam_angle_v = 1.5f;
+        }
+        if (cam_angle_v < -1.5f) {
+            cam_angle_v = -1.5f;
+        }
+        last_mouse_x = xpos;
+        last_mouse_y = ypos;
+    }
+}
+
+static void scroll_callback(GLFWwindow *win, double xoffset, double yoffset) {
+    cam_distance -= yoffset * 0.5f;
+    if (cam_distance < 1.0f) {
+        cam_distance = 1.0f;
+    }
+    if (cam_distance > 50.0f) {
+        cam_distance = 50.0f;
+    }
+}
+
+void start_renderer(simctx *ctx, int width, int height) {
     sim = ctx;
+    w   = width;
+    h   = height;
     glfwInit();
-    window = glfwCreateWindow(w, h, "floating", NULL, NULL);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+    window = glfwCreateWindow(w, h, "FDTD 3D Viewer", NULL, NULL);
     glfwMakeContextCurrent(window);
     gladLoadGLLoader((GLADloadproc) glfwGetProcAddress);
-    glViewport(0, 0, 800, 600);
+    glViewport(0, 0, w, h);
 
-    GLuint vs   = compile_shader(GL_VERTEX_SHADER, vs_src);
-    GLuint fs   = compile_shader(GL_FRAGMENT_SHADER, fs_src);
-    GLuint prog = link_program(vs, fs);
+    // set up mouse callbacks
+    glfwSetMouseButtonCallback(window, mouse_button_callback);
+    glfwSetCursorPosCallback(window, cursor_position_callback);
+    glfwSetScrollCallback(window, scroll_callback);
+
+    GLuint vs = compile_shader(GL_VERTEX_SHADER, vs_src);
+    GLuint fs = compile_shader(GL_FRAGMENT_SHADER, fs_src);
+    prog      = link_program(vs, fs);
     glDeleteShader(vs);
     glDeleteShader(fs);
 
-    GLuint cvs       = compile_shader(GL_VERTEX_SHADER, comp_vs_src);
-    GLuint cfs       = compile_shader(GL_FRAGMENT_SHADER, comp_fs_src);
-    GLuint comp_prog = link_program(cvs, cfs);
+    GLuint cvs = compile_shader(GL_VERTEX_SHADER, comp_vs_src);
+    GLuint cfs = compile_shader(GL_FRAGMENT_SHADER, comp_fs_src);
+    comp_prog  = link_program(cvs, cfs);
     glDeleteShader(cvs);
     glDeleteShader(cfs);
-    glUseProgram(shader_prog);
 
-    // create and bind vertex & array buffer objects
-    float quad[] = {
-        -0.5f, -0.5f, 0.5f, -0.5f, -0.5f, 0.5f, 0.5f, 0.5f,
+    // define cube geometry
+    // clang-format off
+    float unit_cube[] = {
+        // Front face
+        -0.5f, -0.5f,  0.5f,  0.5f, -0.5f,  0.5f,  0.5f,  0.5f,  0.5f,
+        -0.5f, -0.5f,  0.5f,  0.5f,  0.5f,  0.5f, -0.5f,  0.5f,  0.5f,
+        // Back face
+        -0.5f, -0.5f, -0.5f, -0.5f,  0.5f, -0.5f,  0.5f,  0.5f, -0.5f,
+        -0.5f, -0.5f, -0.5f,  0.5f,  0.5f, -0.5f,  0.5f, -0.5f, -0.5f,
+        // Top face
+        -0.5f,  0.5f, -0.5f, -0.5f,  0.5f,  0.5f,  0.5f,  0.5f,  0.5f,
+        -0.5f,  0.5f, -0.5f,  0.5f,  0.5f,  0.5f,  0.5f,  0.5f, -0.5f,
+        // Bottom face
+        -0.5f, -0.5f, -0.5f,  0.5f, -0.5f, -0.5f,  0.5f, -0.5f,  0.5f,
+        -0.5f, -0.5f, -0.5f,  0.5f, -0.5f,  0.5f, -0.5f, -0.5f,  0.5f,
+        // Right face
+         0.5f, -0.5f, -0.5f,  0.5f,  0.5f, -0.5f,  0.5f,  0.5f,  0.5f,
+         0.5f, -0.5f, -0.5f,  0.5f,  0.5f,  0.5f,  0.5f, -0.5f,  0.5f,
+        // Left face
+        -0.5f, -0.5f, -0.5f, -0.5f, -0.5f,  0.5f, -0.5f,  0.5f,  0.5f,
+        -0.5f, -0.5f, -0.5f, -0.5f,  0.5f,  0.5f, -0.5f,  0.5f, -0.5f,
     };
+    // clang-format on
 
     glGenVertexArrays(1, &vao);
     glBindVertexArray(vao);
     glGenBuffers(1, &vbo);
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(quad), quad, GL_STATIC_DRAW);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(unit_cube), unit_cube, GL_STATIC_DRAW);
     glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, (void *) 0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, (void *) 0);
 
-    // create and bind SSBO for vec3 color
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, ssbo_colors);
+    // color SSBO
+    color_ssbo_data =
+        (voxel_data *) malloc(ctx->cell_count * sizeof(voxel_data));
+    if (!color_ssbo_data) {
+        fprintf(stderr, "Failed to allocate color_ssbo_data\n");
+        exit(1);
+    }
+
+    for (int i = 0; i < ctx->cell_count; ++i) {
+        color_ssbo_data[i].magB2     = 1.0f;
+        color_ssbo_data[i].magE2     = 1.0f;
+        color_ssbo_data[i].mat_const = 1.0f;
+    }
+
+    glGenBuffers(1, &ssbo_colors);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo_colors);
     glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(float) * 3 * ctx->cell_count,
-                 NULL,
-                 GL_DYNAMIC_DRAW);  // updated each frame
+                 color_ssbo_data, GL_DYNAMIC_DRAW);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, ssbo_colors);
 
+    // create framebuffer with depth
     glGenFramebuffers(1, &fbo);
     glBindFramebuffer(GL_FRAMEBUFFER, fbo);
 
@@ -187,11 +355,21 @@ void start_renderer(simctx *ctx) {
 
     glGenTextures(1, &revealTex);
     glBindTexture(GL_TEXTURE_2D, revealTex);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_R16F, h, w, 0, GL_RED, GL_FLOAT, NULL);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_R16F, w, h, 0, GL_RED, GL_FLOAT, NULL);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D,
                            revealTex, 0);
+
+    // add depth texture
+    glGenTextures(1, &depthTex);
+    glBindTexture(GL_TEXTURE_2D, depthTex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, w, h, 0,
+                 GL_DEPTH_COMPONENT, GL_FLOAT, NULL);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D,
+                           depthTex, 0);
 
     GLenum bufs[2] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1 };
     glDrawBuffers(2, bufs);
@@ -199,122 +377,149 @@ void start_renderer(simctx *ctx) {
         fprintf(stderr, "FBO incomplete\n");
     }
 
-    // configure blending for weighted blended OIT per draw buffer (requires OpenGL 4.0+ extensions or core)
     glEnable(GL_BLEND);
-    // For attachment 0 (accum): additive blend for color: srcFactor=ONE, dstFactor=ONE
     glBlendFuncSeparatei(0, GL_ONE, GL_ONE, GL_ZERO, GL_ONE_MINUS_SRC_ALPHA);
-    // For attachment 1 (revealage): we want multiplicative-type revealage accumulation; common approach uses glBlendFuncSeparate( GL_ZERO, GL_ONE_MINUS_SRC_ALPHA ) but per-attachment:
-    // We'll accumulate revealage as alpha (simple additive for now): src = GL_ZERO? Simpler approach: write alpha and use GL_ONE_MINUS_SRC_ALPHA for dst; implemented below for attachment 1
     glBlendFuncSeparatei(1, GL_ZERO, GL_ONE_MINUS_SRC_ALPHA, GL_ZERO,
                          GL_ONE_MINUS_SRC_ALPHA);
-    // Note: blending parameters may be tuned. This is a prototyping setup.
-    //
-    // glUseProgram(prog);
-    GLint locGridDim    = glGetUniformLocation(prog, "uGridDim");
-    GLint locCellSize   = glGetUniformLocation(prog, "uCellSize");
-    GLint locGridOrigin = glGetUniformLocation(prog, "uGridOrigin");
-    GLint locProj       = glGetUniformLocation(prog, "uProj");
-    GLint locAlpha      = glGetUniformLocation(prog, "uAlpha");
 
-    // composite shader textures
+    // enable depth testing
+    glEnable(GL_DEPTH_TEST);
+    glDepthMask(GL_FALSE);  // don't write to depth buffer for wOIT
+
+    glUseProgram(prog);
+    locGridDim    = glGetUniformLocation(prog, "uGridDim");
+    locCellSize   = glGetUniformLocation(prog, "uCellSize");
+    locGridOrigin = glGetUniformLocation(prog, "uGridOrigin");
+    locView       = glGetUniformLocation(prog, "uView");
+    locProj       = glGetUniformLocation(prog, "uProj");
+    locAlpha      = glGetUniformLocation(prog, "uAlpha");
+
     glUseProgram(comp_prog);
     glUniform1i(glGetUniformLocation(comp_prog, "uAccumTex"), 0);
     glUniform1i(glGetUniformLocation(comp_prog, "uRevealTex"), 1);
 }
 
 void quit_renderer() {
-    if (voxels) {
-        free(voxels);
+    glDeleteProgram(prog);
+    glDeleteProgram(comp_prog);
+    glDeleteVertexArrays(1, &vao);
+    glDeleteBuffers(1, &vbo);
+    if (ssbo_colors) {
+        glDeleteBuffers(1, &ssbo_colors);
     }
-    glDeleteProgram(shader_prog);
+    glDeleteFramebuffers(1, &fbo);
+    glDeleteTextures(1, &accumTex);
+    glDeleteTextures(1, &revealTex);
+    glDeleteTextures(1, &depthTex);
+    free(color_ssbo_data);
     glfwDestroyWindow(window);
     glfwTerminate();
-}
-
-void clear_screen() {
-    glClear(GL_COLOR_BUFFER_BIT);
 }
 
 int should_close() {
     glfwPollEvents();
     return glfwWindowShouldClose(window) ||
-           glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS;
+           glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS;
 }
 
 void lattice_to_buffer(simctx *ctx) {
-    double *field = ctx->Ex;
-    double  emax2 = E_max * E_max;  // normalize color values for color mapping
-    for (int component = 0; component < 3; component++) {
-        for (int i = 0; i < ctx->cell_count; i++) {
-            voxels[i].magE2 += (*field + *(field++)) / emax2;
+    double *Ex = ctx->Ex;
+    double *Ey = ctx->Ey;
+    double *Ez = ctx->Ez;
+    double *Bx = ctx->Bx;
+    double *By = ctx->By;
+    double *Bz = ctx->Bz;
+
+    for (int i = 0; i < ctx->cell_count; ++i) {
+        float r = 0.0f, g = 0.0f, b = 0.0f;
+        if (Ex && Ey && Ez) {
+            double ex    = Ex[i];
+            double ey    = Ey[i];
+            double ez    = Ez[i];
+            double magE2 = ex * ex + ey * ey + ez * ez;
+            double magE  = sqrt(magE2);
+            r            = (float) fmin(1.0, magE / (E_max + 1e-12));
         }
-    }
-    double bmax2 = B_max * B_max;
-    for (int component = 0; component < 3; component++) {
-        for (int i = 0; i < ctx->cell_count; i++) {
-            voxels[i].magB2 += (*field + *(field++)) / bmax2;
+        if (Bx && By && Bz) {
+            double bx    = Bx[i];
+            double by    = By[i];
+            double bz    = Bz[i];
+            double magB2 = bx * bx + by * by + bz * bz;
+            double magB  = sqrt(magB2);
+            g            = (float) fmin(1.0, magB / (B_max + 1e-12));
         }
+        color_ssbo_data[i].magB2     = r;
+        color_ssbo_data[i].magE2     = g;
+        color_ssbo_data[i].mat_const = b;
     }
 }
 
-void update() {
+void draw() {
     glfwPollEvents();
 
-    // update per-frame colors dynamically; in real app you'll fill colors_cpu accordingly
-    // upload color SSBO
+    // update colors from simulation data
+    // lattice_to_buffer(sim);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo_colors);
-    glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(float) * 3 * cellCount,
-                    colors_cpu);
-
-    // clear counts SSBO to zero
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo_counts);
-    void *zero = calloc(cellCount, sizeof(unsigned int));
     glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0,
-                    sizeof(unsigned int) * cellCount, zero);
-    free(zero);
+                    sizeof(float) * 3 * sim->cell_count, color_ssbo_data);
 
-    // bind FBO and clear render targets
+    // bind FBO and clear
     glBindFramebuffer(GL_FRAMEBUFFER, fbo);
-    glViewport(0, 0, screen_w, screen_h);
-    // clear both attachments
+    glViewport(0, 0, w, h);
     GLfloat clearAccum[4] = { 0, 0, 0, 0 };
     glClearBufferfv(GL_COLOR, 0, clearAccum);
-    GLfloat clearReveal[4] = { 0, 0, 0, 0 };
+    // Initialize to 1 for proper wOIT
+    GLfloat clearReveal[4] = { 1, 1, 1, 1 };
     glClearBufferfv(GL_COLOR, 1, clearReveal);
+    glClear(GL_DEPTH_BUFFER_BIT);
 
-    // render instanced quads
+    // render instanced cubes
     glUseProgram(prog);
-    glUniform2i(locGridDim, cols, rows);
-    glUniform2f(locCellSize, 1.0f, 1.0f);
-    glUniform2f(locGridOrigin, 0.0f, 0.0f);
+
+    glUniform3i(locGridDim, sim->nx, sim->ny, sim->nz);
+    glUniform3f(locCellSize, 1.0f, 1.0f, 1.0f);
+
+    // Center the grid at origin
+    glUniform3f(locGridOrigin, -sim->nx * 0.5f, -sim->ny * 0.5f,
+                -sim->nz * 0.5f);
+
+    // compute camera position using spherical coordinates
+    float grid_center_x = 0.0f;
+    float grid_center_y = 0.0f;
+    float grid_center_z = 0.0f;
+
+    float eye_x =
+        grid_center_x + cam_distance * cosf(cam_angle_v) * cosf(cam_angle_h);
+    float eye_y = grid_center_y + cam_distance * sinf(cam_angle_v);
+    float eye_z =
+        grid_center_z + cam_distance * cosf(cam_angle_v) * sinf(cam_angle_h);
+
+    float view[16];
+    lookat_mat4(eye_x, eye_y, eye_z, grid_center_x, grid_center_y,
+                grid_center_z, 0.0f, 1.0f, 0.0f, view);
+    glUniformMatrix4fv(locView, 1, GL_FALSE, view);
+
+    float proj[16];
+    float aspect = (float) w / (float) h;
+    perspective_mat4(1.0f, aspect, 0.1f, 100.0f, proj);
     glUniformMatrix4fv(locProj, 1, GL_FALSE, proj);
-    glUniform1f(locAlpha, 1.0f);  // opaque for prototype; change as needed
+
+    // adjust alpha based on grid density for better visualization
+    float alpha = fminf(0.1f, 1.0f / sqrtf(sim->cell_count));
+    glUniform1f(locAlpha, alpha);
 
     glBindVertexArray(vao);
-    // draw quad (4 vertices) instanced cellCount times
-    glDrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 4, cellCount);
+    glDrawArraysInstanced(GL_TRIANGLES, 0, 36, sim->cell_count);
 
-    // memory barrier: ensure SSBO writes completed before CPU read
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_FRAMEBUFFER_BARRIER_BIT);
 
-    // Optional: read back counts to CPU
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo_counts);
-    unsigned int *counts_read = malloc(sizeof(unsigned int) * cellCount);
-    glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0,
-                       sizeof(unsigned int) * cellCount, counts_read);
-    // Now counts_read[i] contains number of fragments (samples) that covered cell i this frame
-    // You can process or print some stats:
-    // e.g., print first few
-    for (int i = 0; i < 5; i++) {
-        printf("cell %d pixels = %u\n", i, counts_read[i]);
-    }
-    free(counts_read);
-
-    // composite pass to screen: bind default FB and draw full-screen triangle
+    // composite to screen
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    glViewport(0, 0, screen_w, screen_h);
-    glClearColor(0, 0, 0, 1);
+    glViewport(0, 0, w, h);
+    glClearColor(0.1f, 0.1f, 0.15f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
+    glDisable(GL_DEPTH_TEST);
+
     glUseProgram(comp_prog);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, accumTex);
@@ -322,79 +527,7 @@ void update() {
     glBindTexture(GL_TEXTURE_2D, revealTex);
     glDrawArrays(GL_TRIANGLES, 0, 3);
 
-    glfwSwapBuffers(win);
-}
+    glEnable(GL_DEPTH_TEST);
 
-void draw() {
-    update();
-    glDrawArrays(GL_TRIANGLES, 0, 3);
     glfwSwapBuffers(window);
-}
-
-char *read_file(const char *path) {
-    FILE *file = fopen(path, "rb");
-    if (!file) {
-        fprintf(stderr, "Failed to open file: %s\n", path);
-        return NULL;
-    }
-    fseek(file, 0, SEEK_END);
-    long length = ftell(file);
-    fseek(file, 0, SEEK_SET);
-
-    char *buffer = (char *) malloc(length + 1);
-    if (!buffer) {
-        fprintf(stderr, "Failed to allocate memory for file: %s\n", path);
-        fclose(file);
-        return NULL;
-    }
-
-    fread(buffer, 1, length, file);
-    buffer[length] = '\0';  // null-terminate
-    fclose(file);
-    return buffer;
-}
-
-GLuint compile_shader(GLenum type, const char *source) {
-    GLuint shader = glCreateShader(type);
-    glShaderSource(shader, 1, &source, NULL);
-    glCompileShader(shader);
-
-    // Check compile status
-    GLint success;
-    glGetShaderiv(shader, GL_COMPILE_STATUS, &success);
-    if (!success) {
-        char infoLog[512];
-        glGetShaderInfoLog(shader, 512, NULL, infoLog);
-        const char *typeName =
-            (type == GL_VERTEX_SHADER) ? "VERTEX" : "FRAGMENT";
-        fprintf(stderr, "ERROR::SHADER::%s::COMPILATION_FAILED\n%s\n", typeName,
-                infoLog);
-    }
-
-    return shader;
-}
-
-GLuint create_shader_program(const char *vertexSrc, const char *fragmentSrc) {
-    GLuint vertexShader   = compile_shader(GL_VERTEX_SHADER, vertexSrc);
-    GLuint fragmentShader = compile_shader(GL_FRAGMENT_SHADER, fragmentSrc);
-
-    GLuint program = glCreateProgram();
-    glAttachShader(program, vertexShader);
-    glAttachShader(program, fragmentShader);
-    glLinkProgram(program);
-
-    // Check link status
-    GLint success;
-    glGetProgramiv(program, GL_LINK_STATUS, &success);
-    if (!success) {
-        char infoLog[512];
-        glGetProgramInfoLog(program, 512, NULL, infoLog);
-        fprintf(stderr, "ERROR::PROGRAM::LINKING_FAILED\n%s\n", infoLog);
-    }
-
-    // Shaders can be deleted after linking
-    glDeleteShader(vertexShader);
-    glDeleteShader(fragmentShader);
-
-    return program;
 }
