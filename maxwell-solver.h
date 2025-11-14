@@ -19,7 +19,7 @@ typedef struct {
 typedef struct SimulationContext {
     double sx, sy, sz;
 
-    int res;
+    double res;
 
     double *field_mem;
     int     cell_count;
@@ -44,7 +44,7 @@ typedef struct SimulationContext {
 simctx *init_simulation(double size_x,
                         double size_y,
                         double size_z,
-                        int    resolution);
+                        double resolution);
 
 void apply_point_charge(simctx *ctx, dvec3 position);
 void apply_point_current(simctx *ctx, dvec3 position);

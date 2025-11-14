@@ -20,11 +20,11 @@ static const char *vs_src =
     " int nx = uGridDim.x;\n"
     " int ny = uGridDim.y;\n"
     " int nz = uGridDim.z;\n"
-    " // Convert flat index to 3D coordinates (row-major: z*nx*ny + y*nx + x)\n"
-    " int z = idx / (nx * ny);\n"
-    " int rem = idx % (nx * ny);\n"
-    " int y = rem / nx;\n"
-    " int x = rem % nx;\n"
+    " // Convert flat index to 3D coordinates (row-minor: x*nz*ny + y*nz + z)\n"
+    " int x = idx / (ny * nz);\n"
+    " int rem = idx % (ny * nz);\n"
+    " int y = rem / nz;\n"
+    " int z = rem % nz;\n"
     " // Cell center in world-space\n"
     " vec3 cellCenter = uGridOrigin + (vec3(x, y, z) + vec3(0.5)) * "
     "uCellSize;\n"
@@ -60,7 +60,7 @@ static const char *comp_fs_src =
     "uniform sampler2D uAccumTex;\n"
     "uniform sampler2D uRevealTex;\n"
     "void main() {\n"
-    " vec2 uv = gl_FragCoord.xy / textureSize(uAccumTex, 0);\n"
+    "vec2 uv = gl_FragCoord.xy / vec2(textureSize(uAccumTex, 0));"
     " vec3 accum = texture(uAccumTex, uv).rgb;\n"
     " float reveal = texture(uRevealTex, uv).r;\n"
     " float eps = 1e-6;\n"
@@ -266,7 +266,7 @@ void start_renderer(simctx *ctx, int width, int height) {
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-    window = glfwCreateWindow(w, h, "FDTD 3D Viewer", NULL, NULL);
+    window = glfwCreateWindow(w, h, "floating", NULL, NULL);
     glfwMakeContextCurrent(window);
     gladLoadGLLoader((GLADloadproc) glfwGetProcAddress);
     glViewport(0, 0, w, h);
@@ -329,8 +329,8 @@ void start_renderer(simctx *ctx, int width, int height) {
     }
 
     for (int i = 0; i < ctx->cell_count; ++i) {
-        color_ssbo_data[i].magB2     = 1.0f;
-        color_ssbo_data[i].magE2     = 1.0f;
+        color_ssbo_data[i].magB2     = 0.0f;
+        color_ssbo_data[i].magE2     = 0.0f;
         color_ssbo_data[i].mat_const = 1.0f;
     }
 
@@ -461,7 +461,7 @@ void draw() {
     // lattice_to_buffer(sim);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo_colors);
     glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0,
-                    sizeof(float) * 3 * sim->cell_count, color_ssbo_data);
+                    sizeof(voxel_data) * sim->cell_count, color_ssbo_data);
 
     // bind FBO and clear
     glBindFramebuffer(GL_FRAMEBUFFER, fbo);
@@ -477,7 +477,7 @@ void draw() {
     glUseProgram(prog);
 
     glUniform3i(locGridDim, sim->nx, sim->ny, sim->nz);
-    glUniform3f(locCellSize, 1.0f, 1.0f, 1.0f);
+    glUniform3f(locCellSize, sim->dz, sim->dy, sim->dz);
 
     // Center the grid at origin
     glUniform3f(locGridOrigin, -sim->nx * 0.5f, -sim->ny * 0.5f,
@@ -505,7 +505,7 @@ void draw() {
     glUniformMatrix4fv(locProj, 1, GL_FALSE, proj);
 
     // adjust alpha based on grid density for better visualization
-    float alpha = fminf(0.1f, 1.0f / sqrtf(sim->cell_count));
+    float alpha = 0.5f;  //fminf(0.1f, 1.0f / sqrtf(sim->cell_count));
     glUniform1f(locAlpha, alpha);
 
     glBindVertexArray(vao);
@@ -516,7 +516,7 @@ void draw() {
     // composite to screen
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glViewport(0, 0, w, h);
-    glClearColor(0.1f, 0.1f, 0.15f, 1.0f);
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
     glDisable(GL_DEPTH_TEST);
 

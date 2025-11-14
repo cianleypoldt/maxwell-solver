@@ -19,8 +19,8 @@ void alloc_grid(simctx *ctx);  // forward dec
 simctx *init_simulation(double size_x,
                         double size_y,
                         double size_z,
-                        int    resolution) {
-    if (size_x <= 0 || size_y <= 0 || size_z <= 0 || resolution < 1) {
+                        double resolution) {
+    if (size_x <= 0 || size_y <= 0 || size_z <= 0 || resolution <= 0) {
         fprintf(stderr, "Invalid Simulation parameters\n");
         exit(1);
     }
@@ -30,10 +30,26 @@ simctx *init_simulation(double size_x,
     ctx->nx  = round(size_x * ctx->res);
     ctx->ny  = round(size_y * ctx->res);
     ctx->nz  = round(size_z * ctx->res);
+    ctx->nx  = ctx->nx == 0 ? 1 : ctx->nx;
+    ctx->ny  = ctx->ny == 0 ? 1 : ctx->ny;
+    ctx->nz  = ctx->nz == 0 ? 1 : ctx->nz;
+
+    ctx->sx = ctx->nx / ctx->res;
+    ctx->sy = ctx->ny / ctx->res;
+    ctx->sz = ctx->nz / ctx->res;
+
+    ctx->dx = ctx->sx / ctx->nx;
+    ctx->dy = ctx->sy / ctx->ny;
+    ctx->dz = ctx->sz / ctx->nz;
+
+    ctx->dt              = 0.1;
+    ctx->simulation_time = 0.0;
+
     alloc_grid(ctx);
-    printf("Created simulation of domain size {%f, %f, %f}\n",
-           ctx->nx / (float) ctx->res, ctx->ny / (float) ctx->res,
-           ctx->nz / (float) ctx->res);
+    printf(
+        "Created simulation of domain size {%f, %f, %f}\n"
+        "       Resolution: %f; grid dimensions: {%i, %i, %i}\n",
+        ctx->sx, ctx->sy, ctx->sz, ctx->res, ctx->nx, ctx->ny, ctx->nz);
     return ctx;
 }
 
@@ -72,6 +88,12 @@ void alloc_grid(simctx *ctx) {
         *(ctx->eps + i) = 1;
         *(ctx->mu + i)  = 1;
     }
+
+    int center_idx = (ctx->nx / 2) * ctx->stride_x +
+                     (ctx->ny / 2) * ctx->stride_y +
+                     (ctx->nz / 2) * ctx->stride_z;
+    ctx->Ez[center_idx] = 1.0;
+    ctx->Bx[center_idx] = 0.5;
 }
 
 void free_field(simctx *ctx) {
@@ -88,7 +110,8 @@ void destroy_simulation(simctx *ctx) {
 }
 
 void update_E(simctx *ctx, double time_step) {
-    // first and last E field layers updated later on as PEC boundary, index initialized at E_*[1, 1, 1]
+    // first and last E field layers updated later on as PEC boundary,
+    // index initialized at E_*[1, 1, 1]
     int idx = ctx->stride_z + ctx->stride_x + ctx->stride_y;
     for (int i = 1; i < ctx->nx - 1; i++) {
         for (int j = 1; j < ctx->ny - 1; j++) {
