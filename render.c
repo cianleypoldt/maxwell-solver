@@ -4,530 +4,201 @@
 #include <GLFW/glfw3.h>
 #include <math.h>
 #include <stdio.h>
-#include <stdlib.h>
 
-static const char *vs_src =
-    "#version 430 core\n"
-    "layout(location=0) in vec3 aPos; // cube vertex position [-0.5..0.5]\n"
-    "uniform ivec3 uGridDim; // nx, ny, nz\n"
-    "uniform vec3 uCellSize; // world size of a cell\n"
-    "uniform vec3 uGridOrigin; // world origin of grid (bottom-left-back)\n"
-    "uniform mat4 uView; // view matrix\n"
-    "uniform mat4 uProj; // projection matrix\n"
-    "flat out int vInstanceID;\n"
-    "void main() {\n"
-    " int idx = gl_InstanceID;\n"
-    " int nx = uGridDim.x;\n"
-    " int ny = uGridDim.y;\n"
-    " int nz = uGridDim.z;\n"
-    " // Convert flat index to 3D coordinates (row-minor: x*nz*ny + y*nz + z)\n"
-    " int x = idx / (ny * nz);\n"
-    " int rem = idx % (ny * nz);\n"
-    " int y = rem / nz;\n"
-    " int z = rem % nz;\n"
-    " // Cell center in world-space\n"
-    " vec3 cellCenter = uGridOrigin + (vec3(x, y, z) + vec3(0.5)) * "
-    "uCellSize;\n"
-    " // Scale the unit cube by cell size\n"
-    " vec3 local = aPos * uCellSize;\n"
-    " vec4 worldPos = vec4(cellCenter + local, 1.0);\n"
-    " gl_Position = uProj * uView * worldPos;\n"
-    " vInstanceID = idx;\n"
+const char *vs_basic_src =
+    "#version 330 core\n"
+    "layout(location = 0) in vec3 aPos;\n"
+    "layout(location = 1) in vec3 color;\n"
+    "uniform vec2 window_dimensions;\n"
+    "uniform mat4 transform;\n"
+    "out vec3 out_color;\n"
+    "void main(){\n"
+    "    gl_Position = transform * vec4(aPos.x, aPos.y, aPos.z, 1.0);\n"
+    "out_color = color;\n"
     "}\n";
 
-static const char *fs_src =
-    "#version 430 core\n"
-    "layout(location=0) out vec3 outAccum;\n"
-    "layout(location=1) out float outRevealage;\n"
-    "flat in int vInstanceID;\n"
-    "layout(std430, binding=0) buffer Colors { vec3 colors[]; };\n"
-    "uniform float uAlpha;\n"
-    "void main() {\n"
-    " vec3 col = colors[vInstanceID];\n"
-    " float alpha = uAlpha;\n"
-    " outAccum = col * alpha;\n"
-    " outRevealage = alpha;\n"
-    "}\n";
+const char *fs_basic_src = "#version 330 core\n"
+                           "in vec3 out_color;\n"
+                           "out vec4 FragColor;\n"
+                           "void main()\n"
+                           "{\n"
+                           "    FragColor = vec4(out_color, 1.0f);\n"
+                           "}\n";
 
-static const char *comp_vs_src =
-    "#version 430 core\n"
-    "const vec2 verts[3] = vec2[3](vec2(-1,-1), vec2(3,-1), vec2(-1,3));\n"
-    "void main(){ gl_Position = vec4(verts[gl_VertexID], 0.0, 1.0); }\n";
+int frame_width = 0, frame_height = 0;
+GLFWwindow *window_ptr = NULL;
+float aspect = 0;
 
-static const char *comp_fs_src =
-    "#version 430 core\n"
-    "layout(location=0) out vec4 fragColor;\n"
-    "uniform sampler2D uAccumTex;\n"
-    "uniform sampler2D uRevealTex;\n"
-    "void main() {\n"
-    "vec2 uv = gl_FragCoord.xy / vec2(textureSize(uAccumTex, 0));"
-    " vec3 accum = texture(uAccumTex, uv).rgb;\n"
-    " float reveal = texture(uRevealTex, uv).r;\n"
-    " float eps = 1e-6;\n"
-    " vec3 color = accum / max(reveal, eps);\n"
-    " fragColor = vec4(color, 1.0);\n"
-    "}\n";
+GLuint triangle_vao = 0;
 
-static GLuint compile_shader(GLenum type, const char *src) {
-    GLuint s = glCreateShader(type);
-    glShaderSource(s, 1, &src, NULL);
-    glCompileShader(s);
-    GLint ok = 0;
-    glGetShaderiv(s, GL_COMPILE_STATUS, &ok);
-    if (!ok) {
-        char log[4096];
-        glGetShaderInfoLog(s, sizeof(log), NULL, log);
-        fprintf(stderr, "Shader compile error:\n%s\n", log);
-    }
-    return s;
+GLuint basic_shader_prog = 0;
+GLuint u_transform = 0;
+GLuint u_window_dimensions = 0;
+
+void framebuffer_size_callback(GLFWwindow *window, int w, int h) {
+  int x_border = (w - frame_width) / 2;
+  int y_border = (h - frame_height) / 2;
+
+  if (x_border < 0) {
+    x_border = 0;
+  }
+  if (y_border < 0) {
+    y_border = 0;
+  }
+
+  glViewport(x_border, y_border, frame_width, frame_height);
 }
 
-static GLuint link_program(GLuint vs, GLuint fs) {
-    GLuint p = glCreateProgram();
-    glAttachShader(p, vs);
-    glAttachShader(p, fs);
-    glLinkProgram(p);
-    GLint ok = 0;
-    glGetProgramiv(p, GL_LINK_STATUS, &ok);
-    if (!ok) {
-        char log[4096];
-        glGetProgramInfoLog(p, sizeof(log), NULL, log);
-        fprintf(stderr, "Link error:\n%s\n", log);
-    }
-    return p;
-}
+void init_resources();
 
-const double E_max = 1;
-const double B_max = 1;
+void start_renderer(int width, int height) {
+  frame_width = width;
+  frame_height = height;
+  glfwInit();
+  glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+  glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+  glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
-typedef struct VoxelData {
-    float magE2;
-    float magB2;
-    float mat_const;
-} voxel_data;
+  window_ptr = glfwCreateWindow(width, height, "floating", NULL, NULL);
 
-simctx     *sim    = NULL;
-GLFWwindow *window = NULL;
-int         w = 800, h = 600;
-
-GLuint prog      = 0;
-GLuint comp_prog = 0;
-
-GLuint      vao             = 0;
-GLuint      vbo             = 0;
-voxel_data *color_ssbo_data = NULL;
-GLuint      ssbo_colors     = 0;
-GLuint      fbo             = 0;
-GLuint      accumTex = 0, revealTex = 0, depthTex = 0;
-
-GLint locGridDim    = 0;
-GLint locCellSize   = 0;
-GLint locGridOrigin = 0;
-GLint locView       = 0;
-GLint locProj       = 0;
-GLint locAlpha      = 0;
-
-// camera state
-float  cam_distance      = 10.0f;
-float  cam_angle_h       = 0.0f;
-float  cam_angle_v       = 0.3f;
-double last_mouse_x      = 0.0;
-double last_mouse_y      = 0.0;
-int    mouse_button_down = 0;
-
-// perspective projection matrix (column-major)
-static void perspective_mat4(float  fov_y,
-                             float  aspect,
-                             float  nearp,
-                             float  farp,
-                             float *out16) {
-    float f = 1.0f / tanf(fov_y * 0.5f);
-
-    out16[0]  = f / aspect;
-    out16[4]  = 0.0f;
-    out16[8]  = 0.0f;
-    out16[12] = 0.0f;
-    out16[1]  = 0.0f;
-    out16[5]  = f;
-    out16[9]  = 0.0f;
-    out16[13] = 0.0f;
-    out16[2]  = 0.0f;
-    out16[6]  = 0.0f;
-    out16[10] = (farp + nearp) / (nearp - farp);
-    out16[14] = (2.0f * farp * nearp) / (nearp - farp);
-    out16[3]  = 0.0f;
-    out16[7]  = 0.0f;
-    out16[11] = -1.0f;
-    out16[15] = 0.0f;
-}
-
-// look-at view matrix (column-major)
-static void lookat_mat4(float  eye_x,
-                        float  eye_y,
-                        float  eye_z,
-                        float  center_x,
-                        float  center_y,
-                        float  center_z,
-                        float  up_x,
-                        float  up_y,
-                        float  up_z,
-                        float *out16) {
-    // Forward vector (from eye to center)
-    float fx    = center_x - eye_x;
-    float fy    = center_y - eye_y;
-    float fz    = center_z - eye_z;
-    float f_len = sqrtf(fx * fx + fy * fy + fz * fz);
-    fx /= f_len;
-    fy /= f_len;
-    fz /= f_len;
-
-    // Right vector (cross product of forward and up)
-    float rx    = fy * up_z - fz * up_y;
-    float ry    = fz * up_x - fx * up_z;
-    float rz    = fx * up_y - fy * up_x;
-    float r_len = sqrtf(rx * rx + ry * ry + rz * rz);
-    rx /= r_len;
-    ry /= r_len;
-    rz /= r_len;
-
-    // Up vector (cross product of right and forward)
-    float ux = ry * fz - rz * fy;
-    float uy = rz * fx - rx * fz;
-    float uz = rx * fy - ry * fx;
-
-    out16[0]  = rx;
-    out16[4]  = ux;
-    out16[8]  = -fx;
-    out16[12] = -(rx * eye_x + ux * eye_y - fx * eye_z);
-    out16[1]  = ry;
-    out16[5]  = uy;
-    out16[9]  = -fy;
-    out16[13] = -(ry * eye_x + uy * eye_y - fy * eye_z);
-    out16[2]  = rz;
-    out16[6]  = uz;
-    out16[10] = -fz;
-    out16[14] = -(rz * eye_x + uz * eye_y - fz * eye_z);
-    out16[3]  = 0.0f;
-    out16[7]  = 0.0f;
-    out16[11] = 0.0f;
-    out16[15] = 1.0f;
-}
-
-// mouse callback for camera control
-static void mouse_button_callback(GLFWwindow *win,
-                                  int         button,
-                                  int         action,
-                                  int         mods) {
-    if (button == GLFW_MOUSE_BUTTON_LEFT) {
-        if (action == GLFW_PRESS) {
-            mouse_button_down = 1;
-            glfwGetCursorPos(win, &last_mouse_x, &last_mouse_y);
-        } else if (action == GLFW_RELEASE) {
-            mouse_button_down = 0;
-        }
-    }
-}
-
-static void cursor_position_callback(GLFWwindow *win,
-                                     double      xpos,
-                                     double      ypos) {
-    if (mouse_button_down) {
-        double dx = xpos - last_mouse_x;
-        double dy = ypos - last_mouse_y;
-        cam_angle_h += dx * 0.01f;
-        cam_angle_v += dy * 0.01f;
-        // Clamp vertical angle
-        if (cam_angle_v > 1.5f) {
-            cam_angle_v = 1.5f;
-        }
-        if (cam_angle_v < -1.5f) {
-            cam_angle_v = -1.5f;
-        }
-        last_mouse_x = xpos;
-        last_mouse_y = ypos;
-    }
-}
-
-static void scroll_callback(GLFWwindow *win, double xoffset, double yoffset) {
-    cam_distance -= yoffset * 0.5f;
-    if (cam_distance < 1.0f) {
-        cam_distance = 1.0f;
-    }
-    if (cam_distance > 50.0f) {
-        cam_distance = 50.0f;
-    }
-}
-
-void start_renderer(simctx *ctx, int width, int height) {
-    sim = ctx;
-    w   = width;
-    h   = height;
-    glfwInit();
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
-    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-    window = glfwCreateWindow(w, h, "floating", NULL, NULL);
-    glfwMakeContextCurrent(window);
-    gladLoadGLLoader((GLADloadproc) glfwGetProcAddress);
-    glViewport(0, 0, w, h);
-
-    // set up mouse callbacks
-    glfwSetMouseButtonCallback(window, mouse_button_callback);
-    glfwSetCursorPosCallback(window, cursor_position_callback);
-    glfwSetScrollCallback(window, scroll_callback);
-
-    GLuint vs = compile_shader(GL_VERTEX_SHADER, vs_src);
-    GLuint fs = compile_shader(GL_FRAGMENT_SHADER, fs_src);
-    prog      = link_program(vs, fs);
-    glDeleteShader(vs);
-    glDeleteShader(fs);
-
-    GLuint cvs = compile_shader(GL_VERTEX_SHADER, comp_vs_src);
-    GLuint cfs = compile_shader(GL_FRAGMENT_SHADER, comp_fs_src);
-    comp_prog  = link_program(cvs, cfs);
-    glDeleteShader(cvs);
-    glDeleteShader(cfs);
-
-    // define cube geometry
-    // clang-format off
-    float unit_cube[] = {
-        // Front face
-        -0.5f, -0.5f,  0.5f,  0.5f, -0.5f,  0.5f,  0.5f,  0.5f,  0.5f,
-        -0.5f, -0.5f,  0.5f,  0.5f,  0.5f,  0.5f, -0.5f,  0.5f,  0.5f,
-        // Back face
-        -0.5f, -0.5f, -0.5f, -0.5f,  0.5f, -0.5f,  0.5f,  0.5f, -0.5f,
-        -0.5f, -0.5f, -0.5f,  0.5f,  0.5f, -0.5f,  0.5f, -0.5f, -0.5f,
-        // Top face
-        -0.5f,  0.5f, -0.5f, -0.5f,  0.5f,  0.5f,  0.5f,  0.5f,  0.5f,
-        -0.5f,  0.5f, -0.5f,  0.5f,  0.5f,  0.5f,  0.5f,  0.5f, -0.5f,
-        // Bottom face
-        -0.5f, -0.5f, -0.5f,  0.5f, -0.5f, -0.5f,  0.5f, -0.5f,  0.5f,
-        -0.5f, -0.5f, -0.5f,  0.5f, -0.5f,  0.5f, -0.5f, -0.5f,  0.5f,
-        // Right face
-         0.5f, -0.5f, -0.5f,  0.5f,  0.5f, -0.5f,  0.5f,  0.5f,  0.5f,
-         0.5f, -0.5f, -0.5f,  0.5f,  0.5f,  0.5f,  0.5f, -0.5f,  0.5f,
-        // Left face
-        -0.5f, -0.5f, -0.5f, -0.5f, -0.5f,  0.5f, -0.5f,  0.5f,  0.5f,
-        -0.5f, -0.5f, -0.5f, -0.5f,  0.5f,  0.5f, -0.5f,  0.5f, -0.5f,
-    };
-    // clang-format on
-
-    glGenVertexArrays(1, &vao);
-    glBindVertexArray(vao);
-    glGenBuffers(1, &vbo);
-    glBindBuffer(GL_ARRAY_BUFFER, vbo);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(unit_cube), unit_cube, GL_STATIC_DRAW);
-    glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, (void *) 0);
-
-    // color SSBO
-    color_ssbo_data =
-        (voxel_data *) malloc(ctx->cell_count * sizeof(voxel_data));
-    if (!color_ssbo_data) {
-        fprintf(stderr, "Failed to allocate color_ssbo_data\n");
-        exit(1);
-    }
-
-    for (int i = 0; i < ctx->cell_count; ++i) {
-        color_ssbo_data[i].magB2     = 0.0f;
-        color_ssbo_data[i].magE2     = 0.0f;
-        color_ssbo_data[i].mat_const = 1.0f;
-    }
-
-    glGenBuffers(1, &ssbo_colors);
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo_colors);
-    glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(float) * 3 * ctx->cell_count,
-                 color_ssbo_data, GL_DYNAMIC_DRAW);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, ssbo_colors);
-
-    // create framebuffer with depth
-    glGenFramebuffers(1, &fbo);
-    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
-
-    glGenTextures(1, &accumTex);
-    glBindTexture(GL_TEXTURE_2D, accumTex);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, w, h, 0, GL_RGBA, GL_FLOAT,
-                 NULL);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
-                           accumTex, 0);
-
-    glGenTextures(1, &revealTex);
-    glBindTexture(GL_TEXTURE_2D, revealTex);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_R16F, w, h, 0, GL_RED, GL_FLOAT, NULL);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D,
-                           revealTex, 0);
-
-    // add depth texture
-    glGenTextures(1, &depthTex);
-    glBindTexture(GL_TEXTURE_2D, depthTex);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, w, h, 0,
-                 GL_DEPTH_COMPONENT, GL_FLOAT, NULL);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D,
-                           depthTex, 0);
-
-    GLenum bufs[2] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1 };
-    glDrawBuffers(2, bufs);
-    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
-        fprintf(stderr, "FBO incomplete\n");
-    }
-
-    glEnable(GL_BLEND);
-    glBlendFuncSeparatei(0, GL_ONE, GL_ONE, GL_ZERO, GL_ONE_MINUS_SRC_ALPHA);
-    glBlendFuncSeparatei(1, GL_ZERO, GL_ONE_MINUS_SRC_ALPHA, GL_ZERO,
-                         GL_ONE_MINUS_SRC_ALPHA);
-
-    // enable depth testing
-    glEnable(GL_DEPTH_TEST);
-    glDepthMask(GL_FALSE);  // don't write to depth buffer for wOIT
-
-    glUseProgram(prog);
-    locGridDim    = glGetUniformLocation(prog, "uGridDim");
-    locCellSize   = glGetUniformLocation(prog, "uCellSize");
-    locGridOrigin = glGetUniformLocation(prog, "uGridOrigin");
-    locView       = glGetUniformLocation(prog, "uView");
-    locProj       = glGetUniformLocation(prog, "uProj");
-    locAlpha      = glGetUniformLocation(prog, "uAlpha");
-
-    glUseProgram(comp_prog);
-    glUniform1i(glGetUniformLocation(comp_prog, "uAccumTex"), 0);
-    glUniform1i(glGetUniformLocation(comp_prog, "uRevealTex"), 1);
-}
-
-void quit_renderer() {
-    glDeleteProgram(prog);
-    glDeleteProgram(comp_prog);
-    glDeleteVertexArrays(1, &vao);
-    glDeleteBuffers(1, &vbo);
-    if (ssbo_colors) {
-        glDeleteBuffers(1, &ssbo_colors);
-    }
-    glDeleteFramebuffers(1, &fbo);
-    glDeleteTextures(1, &accumTex);
-    glDeleteTextures(1, &revealTex);
-    glDeleteTextures(1, &depthTex);
-    free(color_ssbo_data);
-    glfwDestroyWindow(window);
+  if (window_ptr == NULL) {
     glfwTerminate();
+    fprintf(stderr, "Failed to create GLFW window");
+  }
+  glfwMakeContextCurrent(window_ptr);
+
+  if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) {
+    fprintf(stderr, "Failed to initialize GLAD");
+  }
+  glViewport(0, 0, frame_width, frame_height);
+  glfwSetFramebufferSizeCallback(window_ptr, framebuffer_size_callback);
+
+  init_resources();
+  u_transform = glGetUniformLocation(basic_shader_prog, "transform");
+  u_window_dimensions =
+      glGetUniformLocation(basic_shader_prog, "window_dimensions");
+  glUniform2f(u_window_dimensions, frame_width, frame_height);
+  aspect = (float)frame_width / (float)frame_height;
+
+  glClearColor(0.2f, 0.3f, 0.3f, 1.0f);
+  glEnable(GL_DEPTH_TEST);
 }
 
-int should_close() {
-    glfwPollEvents();
-    return glfwWindowShouldClose(window) ||
-           glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS;
-}
-
-void lattice_to_buffer(simctx *ctx) {
-    double *Ex = ctx->Ex;
-    double *Ey = ctx->Ey;
-    double *Ez = ctx->Ez;
-    double *Bx = ctx->Bx;
-    double *By = ctx->By;
-    double *Bz = ctx->Bz;
-
-    for (int i = 0; i < ctx->cell_count; ++i) {
-        float r = 0.0f, g = 0.0f, b = 0.0f;
-        if (Ex && Ey && Ez) {
-            double ex    = Ex[i];
-            double ey    = Ey[i];
-            double ez    = Ez[i];
-            double magE2 = ex * ex + ey * ey + ez * ez;
-            double magE  = sqrt(magE2);
-            r            = (float) fmin(1.0, magE / (E_max + 1e-12));
-        }
-        if (Bx && By && Bz) {
-            double bx    = Bx[i];
-            double by    = By[i];
-            double bz    = Bz[i];
-            double magB2 = bx * bx + by * by + bz * bz;
-            double magB  = sqrt(magB2);
-            g            = (float) fmin(1.0, magB / (B_max + 1e-12));
-        }
-        color_ssbo_data[i].magB2     = r;
-        color_ssbo_data[i].magE2     = g;
-        color_ssbo_data[i].mat_const = b;
-    }
+void process_input() {
+  if (glfwGetKey(window_ptr, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
+    glfwSetWindowShouldClose(window_ptr, 1);
+  };
 }
 
 void draw() {
-    glfwPollEvents();
+  process_input();
 
-    // update colors from simulation data
-    // lattice_to_buffer(sim);
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo_colors);
-    glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0,
-                    sizeof(voxel_data) * sim->cell_count, color_ssbo_data);
+  static float transform[16];
+  float time = (float)glfwGetTime();
+  float angle = time; // radians, rotates at 1 rad/s
+  float c = cosf(angle);
+  float s = sinf(angle);
 
-    // bind FBO and clear
-    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
-    glViewport(0, 0, w, h);
-    GLfloat clearAccum[4] = { 0, 0, 0, 0 };
-    glClearBufferfv(GL_COLOR, 0, clearAccum);
-    // Initialize to 1 for proper wOIT
-    GLfloat clearReveal[4] = { 1, 1, 1, 1 };
-    glClearBufferfv(GL_COLOR, 1, clearReveal);
-    glClear(GL_DEPTH_BUFFER_BIT);
+  // Row-major rotation around Y axis
+  transform[0] = c;
+  transform[1] = 0;
+  transform[2] = s;
+  transform[3] = 0;
+  transform[4] = 0;
+  transform[5] = 1;
+  transform[6] = 0;
+  transform[7] = 0;
+  transform[8] = -s;
+  transform[9] = 0;
+  transform[10] = c;
+  transform[11] = 0;
+  transform[12] = 0;
+  transform[13] = 0;
+  transform[14] = 0;
+  transform[15] = 1;
 
-    // render instanced cubes
-    glUseProgram(prog);
+  glUniformMatrix4fv(u_transform, 1, GL_FALSE, transform);
+  glBindVertexArray(triangle_vao);
+  glUseProgram(basic_shader_prog);
+  glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+  glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
+  glfwSwapBuffers(window_ptr);
+}
 
-    glUniform3i(locGridDim, sim->nx, sim->ny, sim->nz);
-    glUniform3f(locCellSize, sim->dz, sim->dy, sim->dz);
+void quit_renderer() {
+  glfwDestroyWindow(window_ptr);
+  glfwTerminate();
+}
 
-    // Center the grid at origin
-    glUniform3f(locGridOrigin, -sim->nx * 0.5f, -sim->ny * 0.5f,
-                -sim->nz * 0.5f);
+void init_resources() {
+  glGenVertexArrays(1, &triangle_vao);
+  glBindVertexArray(triangle_vao);
 
-    // compute camera position using spherical coordinates
-    float grid_center_x = 0.0f;
-    float grid_center_y = 0.0f;
-    float grid_center_z = 0.0f;
+  GLuint cube_vbo = 0;
+  glGenBuffers(1, &cube_vbo);
+  glBindBuffer(GL_ARRAY_BUFFER, cube_vbo);
 
-    float eye_x =
-        grid_center_x + cam_distance * cosf(cam_angle_v) * cosf(cam_angle_h);
-    float eye_y = grid_center_y + cam_distance * sinf(cam_angle_v);
-    float eye_z =
-        grid_center_z + cam_distance * cosf(cam_angle_v) * sinf(cam_angle_h);
+  // clang-format off
+    const float triangle_vertices[] = {
+              // back face
+                  -0.5f, -0.5f, -0.5f, 1.0f, 0.0f, 0.0f,
+                  -0.5f, 0.5f, -0.5f, 0.0f, 1.0f, 0.0f,
+                  -0.5f,  0.5f, 0.5f, 0.0f, 0.0f, 1.0f,
+                  -0.5f, -0.5f, 0.5f, 1.0f, 1.0f, 0.0f,
+              // front face
+                   0.5f, -0.5f, -0.5f, 0.5f, 0.5f, 0.0f,
+                   0.5f, 0.5f, -0.5f, 0.0f, 1.0f, 1.0f,
+                   0.5f,  0.5f, 0.5f, 0.0f, 1.0f, 0.5f,
+                   0.5f, -0.5f, 0.5f, 0.5f, 0.5f, 1.0f,
+    };
+  // clang-format on
+  glBufferData(GL_ARRAY_BUFFER, sizeof(triangle_vertices), triangle_vertices,
+               GL_STATIC_DRAW);
 
-    float view[16];
-    lookat_mat4(eye_x, eye_y, eye_z, grid_center_x, grid_center_y,
-                grid_center_z, 0.0f, 1.0f, 0.0f, view);
-    glUniformMatrix4fv(locView, 1, GL_FALSE, view);
+  GLuint cube_ebo;
+  glGenBuffers(1, &cube_ebo);
+  glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, cube_ebo);
 
-    float proj[16];
-    float aspect = (float) w / (float) h;
-    perspective_mat4(1.0f, aspect, 0.1f, 100.0f, proj);
-    glUniformMatrix4fv(locProj, 1, GL_FALSE, proj);
+  const unsigned int cube_indices[] = {// back face
+                                       0, 1, 2, 2, 3, 0,
+                                       // front face
+                                       4, 5, 6, 6, 7, 4,
+                                       // left face
+                                       0, 1, 5, 5, 4, 0,
+                                       // right face
+                                       3, 2, 6, 6, 7, 3,
+                                       // bottom face
+                                       0, 3, 7, 7, 4, 0,
+                                       // top face
+                                       1, 2, 6, 6, 5, 1};
 
-    // adjust alpha based on grid density for better visualization
-    float alpha = 0.5f;  //fminf(0.1f, 1.0f / sqrtf(sim->cell_count));
-    glUniform1f(locAlpha, alpha);
+  glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(cube_indices), cube_indices,
+               GL_STATIC_DRAW);
 
-    glBindVertexArray(vao);
-    glDrawArraysInstanced(GL_TRIANGLES, 0, 36, sim->cell_count);
+  glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void *)0);
+  glEnableVertexAttribArray(0);
+  glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float),
+                        (void *)(3 * sizeof(float)));
+  glEnableVertexAttribArray(1);
 
-    glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_FRAMEBUFFER_BARRIER_BIT);
+  GLuint vs_basic = glCreateShader(GL_VERTEX_SHADER);
+  glShaderSource(vs_basic, 1, &vs_basic_src, NULL);
+  glCompileShader(vs_basic);
 
-    // composite to screen
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    glViewport(0, 0, w, h);
-    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT);
-    glDisable(GL_DEPTH_TEST);
+  GLuint fs_basic = glCreateShader(GL_FRAGMENT_SHADER);
+  glShaderSource(fs_basic, 1, &fs_basic_src, NULL);
+  glCompileShader(fs_basic);
 
-    glUseProgram(comp_prog);
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, accumTex);
-    glActiveTexture(GL_TEXTURE1);
-    glBindTexture(GL_TEXTURE_2D, revealTex);
-    glDrawArrays(GL_TRIANGLES, 0, 3);
+  basic_shader_prog = glCreateProgram();
+  glAttachShader(basic_shader_prog, vs_basic);
+  glAttachShader(basic_shader_prog, fs_basic);
+  glLinkProgram(basic_shader_prog);
 
-    glEnable(GL_DEPTH_TEST);
+  glDeleteShader(vs_basic);
+  glDeleteShader(fs_basic);
+}
 
-    glfwSwapBuffers(window);
+int should_close() {
+  glfwPollEvents();
+  return glfwWindowShouldClose(window_ptr);
 }

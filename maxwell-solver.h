@@ -51,7 +51,7 @@ void apply_point_current(simctx *ctx, dvec3 position);
 
 void destroy_simulation(simctx *ctx);
 // render:
-void start_renderer(simctx *ctx, int width, int height);
+void start_renderer(int width, int height);
 void quit_renderer();
 int  should_close();
 void draw();
