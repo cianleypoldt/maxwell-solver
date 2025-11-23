@@ -37,6 +37,10 @@ const unsigned int cube_indices[]      = { 0, 1, 2, 2, 3, 0, 4, 5, 6, 6, 7, 4,
                                            0, 1, 5, 5, 4, 0, 3, 2, 6, 6, 7, 3,
                                            0, 3, 7, 7, 4, 0, 1, 2, 6, 6, 5, 1 };
 
+typedef enum { VERTEX, FRAGMENT } shader_type;
+
+uint32_t compile_shader_from_path(const char* path, shader_type type);
+
 void framebuffer_size_callback(GLFWwindow* window, int w, int h) {
         int x_border = (w - frame_width) / 2;
         int y_border = (h - frame_height) / 2;
@@ -164,4 +168,49 @@ void init_resources() {
 int should_close() {
         glfwPollEvents();
         return glfwWindowShouldClose(window_ptr);
+}
+
+uint32_t compile_shader_from_path(const char* path, shader_type type) {
+        file src_file = load_file(path);
+        if (src_file.size < 1) {
+                printf("Error loading shader from file \"");
+                printf("%s", path);
+                printf("\"\n");
+                free_file(src_file);
+                return 0;
+        }
+
+        GLuint shader = 0;
+        if (type == VERTEX) {
+                shader = glCreateShader(GL_VERTEX_SHADER);
+        } else if (type == FRAGMENT) {
+                shader = glCreateShader(GL_FRAGMENT_SHADER);
+        } else {
+                return 0;
+        }
+
+        const char* srcv[] = { src_file.buffer };
+        GLint length[]     = { (GLint) src_file.size };  // no null termination
+        glShaderSource(shader, 1, srcv, length);
+        free_file(src_file);
+
+        glCompileShader(shader);
+
+        int success;
+        glGetShaderiv(shader, GL_COMPILE_STATUS, &success);
+        if (success == GL_TRUE) {
+                return shader;
+        }
+
+        int len;
+        glGetShaderiv(shader, GL_INFO_LOG_LENGTH, &len);
+        char* log = malloc(len + 1);
+        glGetShaderInfoLog(shader, len, NULL, log);
+        log[len] = '\n';
+        printf("Shader loaded from \"");
+        printf("%s", path);
+        printf("\" failed to compile:\n    ");
+        printf("%s\n", log);
+        free(log);
+        return 0;
 }
