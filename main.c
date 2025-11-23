@@ -1,10 +1,10 @@
 #include "maxwell-solver.h"
+#include "utils.h"
 
 #include <stdio.h>
-#include <stdlib.h>
 
 int main() {
-        // simctx *sim = init_simulation(100, 100, 100, 0.1);
+        simctx* sim = init_simulation(100, 100, 100, 0.1);
         start_renderer(800, 600);
 
         while (!should_close()) {
@@ -12,5 +12,5 @@ int main() {
         }
 
         quit_renderer();
-        // destroy_simulation(sim);
+        destroy_simulation(sim);
 }
