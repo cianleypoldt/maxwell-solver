@@ -1,6 +1,6 @@
 #include "external/glad/glad.h"
+#include "mathlibc/mathlibc.h"
 #include "maxwell-solver.h"
-#include "utils.h"
 
 #include <GLFW/glfw3.h>
 #include <math.h>
