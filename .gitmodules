@@ -1,0 +1,3 @@
+[submodule "libmath"]
+	path = libmath
+	url = git@github.com:cianleypoldt/libmath.git

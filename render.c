@@ -1,11 +1,20 @@
 #include "external/glad/glad.h"
-#include "mathlibc/mathlibc.h"
 #include "maxwell-solver.h"
 
+#include <assert.h>
 #include <GLFW/glfw3.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+
+typedef struct {
+        void* buffer;
+        long  size;
+} file;
+
+file load_file(const char* path);
+void free_file(file);
 
 #define VS_PATH "shaders/vs_basic.glsl"
 #define FS_PATH "shaders/fs_basic.glsl"
@@ -213,4 +222,33 @@ uint32_t compile_shader_from_path(const char* path, shader_type type) {
         printf("%s\n", log);
         free(log);
         return 0;
+}
+
+file load_file(const char* path) {
+        FILE* fp = fopen(path, "rb");
+        if (!fp) {
+                return (file) { NULL, 0 };
+        }
+
+        fseek(fp, 0, SEEK_END);
+        long size = ftell(fp);
+        fseek(fp, 0, SEEK_SET);
+        if (size < 0) {
+                fclose(fp);
+                return (file) { NULL, 0 };
+        }
+        void* buffer = malloc(size);
+        if (!buffer) {
+                fclose(fp);
+                return (file) { NULL, 0 };
+        }
+
+        fread(buffer, 1, size, fp);
+        fclose(fp);
+
+        return (file) { buffer, size };
+}
+
+void free_file(file f) {
+        free(f.buffer);
 }
