@@ -1,0 +1,3 @@
+[submodule "math_lib_c"]
+	path = math_lib_c
+	url = git@github.com:cianleypoldt/math_lib_c.git
