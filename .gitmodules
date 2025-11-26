@@ -1,3 +1,6 @@
 [submodule "libmath"]
 	path = libmath
 	url = git@github.com:cianleypoldt/libmath.git
+[submodule "glab"]
+	path = glab
+	url = git@github.com:cianleypoldt/glab.git
