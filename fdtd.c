@@ -1,6 +1,7 @@
 #include "fdtd.h"
-#include <math.h>
-#include <stdio.h>
+
+#include "simulation.h"
+
 #include <stdlib.h>
 #include <string.h>
 
@@ -9,28 +10,11 @@
 // Ex[], Ey[], Ez[], Bx[], By[], Bz[], Eps[], Mu[]
 #define BYTES_PER_CELL 8 * sizeof(double)
 
-struct simctx {
-    double Sx, Sy, Sz;
-    int    Nx, Ny, Nz;
-    double dSx, dSy, dSz;
-    double dt;
-    int    step_count;
-
-    int     cell_count;
-    int     stride_x, stride_y, stride_z;
-    double *field_mem;
-
-    double *Ex, *Ey, *Ez;
-    double *Hx, *Hy, *Hz;
-    double *Eps;
-    double *Mu;
-};
-
 const double vacuum_permeability = 4.0 * PI * 1e-7;
 const double vacuum_permittivity = 8.85418782e-12;
 
-simctx *create_simulation(simparams parameters) {
-    simctx *ctx = malloc(sizeof(simctx));
+simctx * create_simulation(simparams parameters) {
+    simctx * ctx = malloc(sizeof(simctx));
 
     ctx->Sx = parameters.size[0];
     ctx->Sy = parameters.size[1];
@@ -68,7 +52,7 @@ simctx *create_simulation(simparams parameters) {
     // memset(ctx->field_mem, 1, (char *) ctx->Eps - (char *) ctx->Ey);
 
     // 1-init eps and mu
-    for (double *mat_const = ctx->Eps; mat_const < ctx->Mu + ctx->cell_count; mat_const++) {
+    for (double * mat_const = ctx->Eps; mat_const < ctx->Mu + ctx->cell_count; mat_const++) {
         *mat_const = 1;
     }
 
@@ -77,12 +61,20 @@ simctx *create_simulation(simparams parameters) {
     return ctx;
 }
 
-void destroy_simulation(simctx *ctx) {
+void destroy_simulation(simctx * ctx) {
     free(ctx->field_mem);
-    ctx->field_mem = NULL;
+    free(ctx);
 }
 
-static void update_E_component(simctx *ctx, double timestep, double *E, double *H1, double H1_diff, int H1_stride, double *H2, double H2_diff, int H2_stride) {
+static void update_E_component(simctx * ctx,
+                               double   timestep,
+                               double * E,
+                               double * H1,
+                               double   H1_diff,
+                               int      H1_stride,
+                               double * H2,
+                               double   H2_diff,
+                               int      H2_stride) {
     for (int i = 1; i < ctx->Nx - 1; i++) {
         for (int j = 1; j < ctx->Ny - 1; j++) {
             int idx = i * ctx->stride_x + j * ctx->stride_y + 1 * ctx->stride_z;
@@ -97,7 +89,15 @@ static void update_E_component(simctx *ctx, double timestep, double *E, double *
     }
 }
 
-static void update_H_component(simctx *ctx, double timestep, double *H, double *E1, double E1_diff, int E1_stride, double *E2, double E2_diff, int E2_stride) {
+static void update_H_component(simctx * ctx,
+                               double   timestep,
+                               double * H,
+                               double * E1,
+                               double   E1_diff,
+                               int      E1_stride,
+                               double * E2,
+                               double   E2_diff,
+                               int      E2_stride) {
     for (int i = 1; i < ctx->Nx - 1; i++) {
         for (int j = 1; j < ctx->Ny - 1; j++) {
             int idx = i * ctx->stride_x + j * ctx->stride_y + 1 * ctx->stride_z;
@@ -112,7 +112,7 @@ static void update_H_component(simctx *ctx, double timestep, double *H, double *
     }
 }
 
-void step_simulation(simctx *ctx) {
+void step_simulation(simctx * ctx) {
     double half_dt = ctx->dt / 2;
     if (ctx->step_count == 0) {
         update_H_component(ctx, half_dt, ctx->Hx, ctx->Ez, ctx->dSy, ctx->stride_y, ctx->Ey, ctx->dSz, ctx->stride_z);
@@ -127,37 +127,4 @@ void step_simulation(simctx *ctx) {
     update_H_component(ctx, half_dt, ctx->Hy, ctx->Ex, ctx->dSz, ctx->stride_z, ctx->Ez, ctx->dSx, ctx->stride_x);
     update_H_component(ctx, half_dt, ctx->Hz, ctx->Ex, ctx->dSy, ctx->stride_y, ctx->Ey, ctx->dSx, ctx->stride_x);
     ctx->step_count++;
-}
-
-field_export export_field_magnitudes(simctx *ctx) {
-    field_export export = {
-        .nx = ctx->Nx,
-        .ny = ctx->Ny,
-        .nz = ctx->Nz,
-        .sx = ctx->Sx,
-        .sy = ctx->Sy,
-        .sz = ctx->Sz,
-
-        .elapsed_steps = ctx->step_count,
-        .timestep      = ctx->dt
-    };
-
-    export.B = malloc(ctx->cell_count * sizeof(float));
-    for (int i = 0; i < ctx->cell_count; i++) {
-        float mu    = ctx->Mu[i];
-        float B[3]  = { mu * ctx->Hx[i], mu * ctx->Hy[i], mu * ctx->Hz[i] };
-        export.B[i] = sqrt(B[0] * B[0] + B[1] * B[1] + B[2] * B[2]);
-    }
-
-    export.E = malloc(ctx->cell_count * sizeof(float));
-    for (int i = 0; i < ctx->cell_count; i++) {
-        export.E[i] = sqrt(ctx->Ex[i] * ctx->Ex[i] + ctx->Ey[i] * ctx->Ey[i] + ctx->Ez[i] * ctx->Ez[i]);
-    }
-
-    return export;
-}
-
-void free_field_export(field_export export) {
-    free(export.B);
-    free(export.E);
 }
