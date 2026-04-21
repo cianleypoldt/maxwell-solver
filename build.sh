@@ -1,6 +1,3 @@
 set -e
 
-
-( cd libmath && ./build.sh )
-
-gcc -o maxwell-solver maxwell-solver.c render.c main.c external/glad.c libmath/libmath.a -lm -lglfw && ./maxwell-solver
+gcc -o fdtd-vol3d.o  maxwell-solver.c  main.c -lm -lglfw && ./fdtd-vol3d.o
