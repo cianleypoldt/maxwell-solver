@@ -1,3 +1,3 @@
 set -e
 
-gcc -o fdtd-vol3d.o  maxwell-solver.c  main.c -lm -lglfw && ./fdtd-vol3d.o
+gcc -o fdtd-vol3d.o fdtd.c  main.c -lm -lglfw && ./fdtd-vol3d.o

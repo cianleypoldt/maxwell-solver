@@ -1,7 +1,7 @@
 Maxwell Solver
 ==============
 
-Finite-difference time-domain (FDTD) solver for Maxwell's equations in C.
+Finite-difference time-domain (FDTD) solver for Maxwell's equations in 3d.
 
 Compile and run:
     gcc fdtd3d.c -o maxwell_solver -lm
