@@ -2,13 +2,16 @@
 
 out vec4 FragColor;
 
-in vec2 TexCoord;
+in vec2 uv;
 
-uniform sampler2D box_texture;
-uniform sampler2D awesome_texture;
+uniform int current_texture;
+
+uniform sampler3D Etex0;
+uniform sampler3D Etex1;
+uniform sampler3D Btex0;
+uniform sampler3D Btex1;
 
 void main()
 {
-    // FragColor = vec4(1.0f, 1.0f, 1.0f, 1.0f);
-    FragColor = mix(texture(box_texture, TexCoord), texture(awesome_texture, TexCoord), 0.2);
+    FragColor = vec4(1.0f, 1.0f, 1.0f, 1.0f);
 }

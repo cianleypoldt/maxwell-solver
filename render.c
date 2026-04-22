@@ -14,7 +14,11 @@ GLuint create_program(const char * vs_path, const char * fs_path);
 float main_quad_vertices[] = {
     -1, -1, 0, 0, 0, 1, -1, 0, 1, 0, 1, 1, 0, 1, 1, -1, -1, 0, 0, 0, 1, 1, 0, 1, 1, -1, 1, 0, 0, 1,
 };
-GLuint volumetric_prog, vbo, vao, tex_3d;
+
+GLuint volumetric_prog, vbo, vao;
+
+int    current_texture = 0;
+GLuint Etex0, Etex1, Btex0, Btex1;
 
 void init_renderer(simctx * ctx, int width, int height) {
     glfwInit();
@@ -40,33 +44,74 @@ void init_renderer(simctx * ctx, int width, int height) {
     glEnableVertexAttribArray(1);
     glBufferData(GL_ARRAY_BUFFER, sizeof(main_quad_vertices), main_quad_vertices, GL_STATIC_DRAW);
 
-    glGenTextures(1, &tex_3d);
+    glGenTextures(1, &Etex0);
+    glGenTextures(1, &Etex1);
+    glGenTextures(1, &Btex0);
+    glGenTextures(1, &Btex1);
 
-    glBindTexture(GL_TEXTURE_3D, tex_3d);
-
+    glBindTexture(GL_TEXTURE_3D, Etex0);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+    glBindTexture(GL_TEXTURE_3D, Etex0);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+    glBindTexture(GL_TEXTURE_3D, Btex1);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+    glBindTexture(GL_TEXTURE_3D, Btex1);
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
 
-    int    texture_height, texture_width, texture_depth;
-    void * voxel_data;
+    glActiveTexture(GL_TEXTURE0 + 0);
+    glBindTexture(GL_TEXTURE_3D, Etex0);
+    glUniform1i(glGetUniformLocation(volumetric_prog, "Etex0"), 0);
+    glActiveTexture(GL_TEXTURE0 + 1);
+    glBindTexture(GL_TEXTURE_3D, Etex1);
+    glUniform1i(glGetUniformLocation(volumetric_prog, "Etex1"), 1);
+    glActiveTexture(GL_TEXTURE0 + 2);
+    glBindTexture(GL_TEXTURE_3D, Btex0);
+    glUniform1i(glGetUniformLocation(volumetric_prog, "Btex0"), 2);
+    glActiveTexture(GL_TEXTURE0 + 3);
+    glBindTexture(GL_TEXTURE_3D, Btex1);
+    glUniform1i(glGetUniformLocation(volumetric_prog, "Btex1"), 3);
 
-    glTexImage3D(GL_TEXTURE_3D, 0, GL_RGBA8, texture_width, texture_height, texture_depth, 0, GL_RGBA, GL_UNSIGNED_BYTE,
-                 voxel_data);
-
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_3D, tex_3d);
-    glUniform1i(glGetUniformLocation(volumetric_prog, "volume"), 0);
+    glClearColor(0.2f, 0.3f, 0.3f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    glfwSwapBuffers(window_ptr);
 }
 
 void deinit_renderer() {
-    glDeleteTextures(1, &tex_3d);
+    glDeleteTextures(1, &Etex0);
+    glDeleteTextures(1, &Etex1);
+    glDeleteTextures(1, &Btex0);
+    glDeleteTextures(1, &Btex1);
     glDeleteBuffers(1, &vbo);
     glDeleteVertexArrays(1, &vao);
     glDeleteProgram(volumetric_prog);
     glfwTerminate();
+}
+
+GLuint create_volume_texture(int width, int height, int depth, int binding, GLuint program, const char * sampler_name) {
+    GLuint texture;
+
+    return texture;
+}
+
+void buffer_3d_array_to_tex(GLuint texture, int width, int height, int depth, void * data) {
+    glBindTexture(GL_TEXTURE_3D, texture);
+    glTexImage3D(GL_TEXTURE_3D, 0, GL_RED, width, height, depth, 0, GL_RED, GL_DOUBLE, data);
 }
 
 struct file {
