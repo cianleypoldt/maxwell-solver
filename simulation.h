@@ -2,19 +2,19 @@
 #define SIMULATION_H
 
 struct simctx {
-    double Sx, Sy, Sz;
-    int    Nx, Ny, Nz;
-    double dSx, dSy, dSz;
-    double dt;
-    int    step_count;
+    float Sx, Sy, Sz;
+    int   Nx, Ny, Nz;
+    float dSx, dSy, dSz;
+    float dt;
+    int   step_count;
 
     int     cell_count;
     int     stride_x, stride_y, stride_z;
-    double *field_mem;
+    float * field_mem;
 
-    double *Ex, *Ey, *Ez;
-    double *Hx, *Hy, *Hz;
-    double *Eps;
-    double *Mu;
+    float * Ex, *Ey, *Ez;
+    float * Hx, *Hy, *Hz;
+    float * Eps;
+    float * Mu;
 };
 #endif
