@@ -6,9 +6,9 @@
 
 int main() {
     simparams parameters = {
-        .size = { 5.0, 5.0, 5.0 },
-          .resolution = { 5,   5,   5   },
-          .timestep = 0.00001
+        .size       = { 5.0, 5.0, 5.0 },
+        .resolution = { 5,   5,   5   },
+        .timestep   = 0.00001
     };
 
     simctx *sim = create_simulation(parameters);
@@ -19,8 +19,9 @@ int main() {
 
     struct timespec timespec = { .tv_nsec = 10, .tv_sec = 1 };
 
-    for (int i = 0; i < STEP_COUNT; i++) {
+    while (!should_close()) {
         step_simulation(sim);
+        process_input();
         render_current();
     }
     deinit_renderer();

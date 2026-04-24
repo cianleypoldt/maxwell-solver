@@ -15,10 +15,11 @@
 
 GLuint create_program(const char *vs_path, const char *fs_path);
 
+// clang-format off
 float main_quad_vertices[] = {
-    -1, -1, 0, 0, 0, 1, -1, 0, 1, 0, 1, 1, 0, 1, 1, -1, -1, 0, 0, 0, 1, 1, 0, 1, 1, -1, 1, 0, 0, 1,
+    -1, -1, -1, 1, 1, 1, -1, -1, 1, -1, 1, 1
 };
-
+// clang-format on
 GLFWwindow *window_ptr;
 
 GLuint volumetric_prog, vbo, vao;
@@ -30,6 +31,7 @@ GLuint Etex, Btex;
 simctx *sim;
 int     window_width, window_height;
 
+float aspect_ratio;
 float camera_pos[3];
 float camera_yaw;
 float camera_pitch;
@@ -37,10 +39,18 @@ float camera_pitch;
 float max_ray_length;
 int   max_steps;
 
+GLint aspect_uniform_loc;
+GLint camera_pos_uniform_loc;
+GLint camera_yaw_uniform_loc;
+GLint camera_pitch_uniform_loc;
+
+static void resize_callback(GLFWwindow *window_ptr, int width, int height);
+
 void init_renderer(simctx *ctx, int width, int height) {
     sim              = ctx;
-    width            = width;
-    height           = height;
+    window_width     = width;
+    window_height    = height;
+    aspect_ratio     = window_width / (float) window_height;
     magnitude_buffer = malloc(sim->cell_count * sizeof(float));
     glfwInit();
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
@@ -49,6 +59,7 @@ void init_renderer(simctx *ctx, int width, int height) {
 
     window_ptr = glfwCreateWindow(width, height, "floating", NULL, NULL);
     glfwSetInputMode(window_ptr, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+    glfwSetWindowSizeCallback(window_ptr, resize_callback);
 
     glfwMakeContextCurrent(window_ptr);
     gladLoadGLLoader((GLADloadproc) glfwGetProcAddress);
@@ -60,10 +71,8 @@ void init_renderer(simctx *ctx, int width, int height) {
     glGenVertexArrays(1, &vao);
     glBindVertexArray(vao);
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void *) 0);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void *) 0);
     glEnableVertexAttribArray(0);
-    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void *) (3 * sizeof(float)));
-    glEnableVertexAttribArray(1);
     glBufferData(GL_ARRAY_BUFFER, sizeof(main_quad_vertices), main_quad_vertices, GL_STATIC_DRAW);
 
     glGenTextures(1, &Etex);
@@ -88,19 +97,16 @@ void init_renderer(simctx *ctx, int width, int height) {
     glUniform1i(glGetUniformLocation(volumetric_prog, "Etex"), 0);
     glUniform1i(glGetUniformLocation(volumetric_prog, "Btex"), 1);
 
+    aspect_uniform_loc       = glGetUniformLocation(volumetric_prog, "aspect");
+    camera_pos_uniform_loc   = glGetUniformLocation(volumetric_prog, "camera_pos");
+    camera_yaw_uniform_loc   = glGetUniformLocation(volumetric_prog, "camera_yaw");
+    camera_pitch_uniform_loc = glGetUniformLocation(volumetric_prog, "camera_pitch");
+
     glUniform1f(glGetUniformLocation(volumetric_prog, "fovy"), 45.0f * (PI / 180));
-    glUniform1f(glGetUniformLocation(volumetric_prog, "aspect"), width / (float) height);
-    glUniform1f(glGetUniformLocation(volumetric_prog, "camera_yaw"), camera_yaw);
-    glUniform1f(glGetUniformLocation(volumetric_prog, "camera_pitch"), camera_pitch);
-    glUniform3f(glGetUniformLocation(volumetric_prog, "camera_pos"), camera_pos[0], camera_pos[1], camera_pos[2]);
+    glUniform3f(glGetUniformLocation(volumetric_prog, "dimensions"), sim->Sx, sim->Sy, sim->Sz);
+    glUniform3f(glGetUniformLocation(volumetric_prog, "voxel_size"), sim->dSx, sim->dSy, sim->dSz);
     glUniform1f(glGetUniformLocation(volumetric_prog, "max_ray_length"), 100.0f);
     glUniform1i(glGetUniformLocation(volumetric_prog, "max_steps"), 20);
-
-    float min_xyz[3] = { -sim->Sx / 2.0f, -sim->Sy / 2.0f, -sim->Sz / 2.0f };
-    float max_xyz[3] = { sim->Sx / 2.0f, sim->Sy / 2.0f, sim->Sz / 2.0f };
-    glUniform3f(glGetUniformLocation(volumetric_prog, "min_xyz"), min_xyz[0], min_xyz[1], min_xyz[2]);
-    glUniform3f(glGetUniformLocation(volumetric_prog, "max_xyz"), max_xyz[0], max_xyz[1], max_xyz[2]);
-    glUniform3f(glGetUniformLocation(volumetric_prog, "voxel_size"), sim->dSx, sim->dSy, sim->dSz);
 
     glClearColor(0.2f, 0.3f, 0.3f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -113,6 +119,7 @@ void deinit_renderer() {
     glDeleteBuffers(1, &vbo);
     glDeleteVertexArrays(1, &vao);
     glDeleteProgram(volumetric_prog);
+
     glfwTerminate();
 }
 
@@ -135,9 +142,96 @@ void render_current() {
     buffer_components((float *[3]){ sim->Hx, sim->Hy, sim->Hz }, Btex);
 
     glUseProgram(volumetric_prog);
+    glUniform1f(aspect_uniform_loc, window_width / (float) window_height);
+    glUniform3f(camera_pos_uniform_loc, camera_pos[0], camera_pos[1], camera_pos[2]);
+    glUniform1f(camera_yaw_uniform_loc, camera_yaw);
+    glUniform1f(camera_pitch_uniform_loc, camera_pitch);
     glBindVertexArray(vao);
-    glDrawArrays(GL_TRIANGLES, 0, sizeof(main_quad_vertices) / (sizeof(float) * 3));
+    glDrawArrays(GL_TRIANGLES, 0, sizeof(main_quad_vertices) / (sizeof(float) * 2));
     glfwSwapBuffers(window_ptr);
+}
+
+int should_close() {
+    return glfwWindowShouldClose(window_ptr) == GLFW_TRUE;
+}
+
+#define CAMERA_SPEED_VERTICAL   0.04
+#define CAMERA_SPEED_HORIZONTAL 0.1
+
+#define CAMERA_PITCH_SENSETIVITY 0.002
+#define CAMERA_YAW_SENSETIVITY   0.002
+
+int g_focused = 1;
+
+void process_input() {
+    {
+        glfwPollEvents();
+        if (glfwGetWindowAttrib(window_ptr, GLFW_FOCUSED) == GLFW_TRUE && glfwGetMouseButton(window_ptr, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS) {
+            glfwSetInputMode(window_ptr, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+            g_focused = 2;
+        }
+    }
+
+    if (glfwGetKey(window_ptr, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
+        glfwSetInputMode(window_ptr, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+        g_focused = 0;
+    }
+
+    if (glfwGetKey(window_ptr, GLFW_KEY_SPACE) == GLFW_PRESS) {
+        camera_pos[2] += CAMERA_SPEED_VERTICAL;
+    }
+    if (glfwGetKey(window_ptr, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS) {
+        camera_pos[2] -= CAMERA_SPEED_VERTICAL;
+    }
+
+    float camera_forward[2] = { sin(camera_yaw), cos(camera_yaw) };
+
+    if (glfwGetKey(window_ptr, GLFW_KEY_W) == GLFW_PRESS) {
+        camera_pos[0] += camera_forward[0];
+        camera_pos[1] += camera_forward[1];
+    }
+    if (glfwGetKey(window_ptr, GLFW_KEY_S) == GLFW_PRESS) {
+        camera_pos[0] -= camera_forward[0];
+        camera_pos[1] -= camera_forward[1];
+    }
+
+    if (glfwGetKey(window_ptr, GLFW_KEY_A) == GLFW_PRESS) {
+        camera_pos[0] -= camera_forward[1];
+        camera_pos[1] += camera_forward[0];
+    }
+    if (glfwGetKey(window_ptr, GLFW_KEY_D) == GLFW_PRESS) {
+        camera_pos[0] += camera_forward[1];
+        camera_pos[1] -= camera_forward[0];
+    }
+}
+
+double prev_cursor_x, prev_cursor_y;
+
+static void resize_callback(GLFWwindow *window_ptr, int width, int height) {
+    glViewport(0, 0, width, height);
+    window_width  = width;
+    window_height = height;
+}
+
+static void curser_pos_callback(GLFWwindow *window_ptr, double xpos, double ypos) {
+    if (!g_focused) {
+        return;
+    }
+
+    double dx = 0;
+    double dy = 0;
+
+    if (g_focused == 1) {
+        dx = xpos - prev_cursor_x;
+        dy = ypos - prev_cursor_y;
+    } else {
+        g_focused = 1;
+    }
+    prev_cursor_x = xpos;
+    prev_cursor_y = ypos;
+
+    camera_pitch += -0.5 * dy * CAMERA_PITCH_SENSETIVITY;
+    camera_yaw += -0.5 * dx * CAMERA_YAW_SENSETIVITY;
 }
 
 struct file {

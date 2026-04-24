@@ -1,12 +1,20 @@
 #version 330 core
 
-layout(location = 0) in vec3 attrib_position;
-layout(location = 1) in vec2 attrib_uv;
+layout(location = 0) in vec2 attrib_position;
 
-out vec2 uv;
+out vec3 ray_dir;
+
+uniform float fovy;
+uniform float aspect;
+
+uniform float camera_yaw;
+uniform float camera_pitch;
 
 void main()
 {
-    uv = attrib_uv;
-    gl_Position = vec4(attrib_position.x, attrib_position.y, attrib_position.z, 1.0f);
+    float ray_pitch = 0.5 * fovy * attrib_position.y + camera_pitch;
+    float ray_yaw = 0.5 * fovy * aspect * attrib_position.x + camera_yaw;
+    ray_dir = vec3(sin(ray_yaw), cos(ray_yaw), sin(ray_pitch));
+
+    gl_Position = vec4(attrib_position.x, attrib_position.y, 0.0f, 1.0f);
 }

@@ -2,28 +2,20 @@
 
 out vec4 FragColor;
 
-in vec2 uv;
+in vec3 ray_dir;
 
-uniform float fovy;
-uniform float aspect;
-
-uniform vec3 camera_pos;
-uniform float camera_yaw;
-uniform float camera_pitch
-
+uniform vec3 voxel_size;
+uniform vec3 dimensions;
 uniform int max_steps;
 uniform float max_ray_length;
 
-uniform vec3 voxel_size;
-uniform vec3 max_xyz;
-uniform vec3 min_xyz;
+uniform vec3 camera_pos;
 
 uniform sampler3D Etex;
 uniform sampler3D Btex;
 
 void main()
 {
-    vec3 r = normalize((camera_yaw, sin(camera_pitch), cos(camera_pitch)));
-
-    FragColor = vec4(1.0f, 1.0f, 1.0f, 1.0f);
+    vec3 ray_dir = normalize(ray_dir);
+    FragColor = vec4(ray_dir, 1.0f);
 }
