@@ -3,9 +3,9 @@
 #include "fdtd.h"
 #include "simulation.h"
 
-void init_renderer(simctx *ctx, int width, int height);
-void deinit_renderer();
-int  should_close();
+void renderer_init(simctx* ctx, int width, int height);
+void renderer_deinit();
+int should_close();
 void process_input();
 
 void render_current();
