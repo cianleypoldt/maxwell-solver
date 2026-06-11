@@ -41,17 +41,19 @@ static void camera_update_directionals(camera_t* camera) {
     camera->forward[0] = cosf(camera->pitch) * sinf(camera->yaw);
     camera->forward[1] = cosf(camera->pitch) * cosf(camera->yaw);
     camera->forward[2] = sinf(camera->pitch);
-    vec3_norm(camera->forward, camera->forward);
+    // vec3_norm(camera->forward, camera->forward);
 
-    camera->right[0] = -camera->forward[1];
-    camera->right[1] = camera->forward[0];
+    //sin(renderer.camera.yaw), cos(renderer.camera.yaw);
+
+    camera->right[0] = cos(camera->pitch);
+    camera->right[1] = -sin(camera->pitch);
     camera->right[2] = 0;
     vec3_norm(camera->right, camera->right);
 
     vec3_cross(camera->up, camera->right, camera->forward);
 
-    vec3_scale(camera->right, camera->right, 1);
-    vec3_scale(camera->up, camera->up, 1);
+    vec3_scale(camera->right, camera->right, tanf(camera->fovy * 0.5f));
+    vec3_scale(camera->up, camera->up, tanf(camera->fovy * 0.5f) / camera->aspect_ratio);
 }
 
 struct renderer {
@@ -82,7 +84,7 @@ void renderer_init(simctx* ctx, int width, int height) {
     renderer.window_height = height;
 
     renderer.camera.aspect_ratio = renderer.window_width / (float)renderer.window_height;
-    renderer.camera.fovy = 50;
+    renderer.camera.fovy = 90;
 
     magnitude_buffer = malloc(renderer.sim->cell_count * sizeof(float));
 
@@ -223,24 +225,22 @@ void process_input() {
         renderer.camera.pos[2] -= CAMERA_SPEED_VERTICAL;
     }
 
-    float camera_forward[2] = {sin(renderer.camera.yaw), cos(renderer.camera.yaw)};
-
     if (glfwGetKey(renderer.window_ptr, GLFW_KEY_W) == GLFW_PRESS) {
-        renderer.camera.pos[0] += camera_forward[0];
-        renderer.camera.pos[1] += camera_forward[1];
+        renderer.camera.pos[0] += renderer.camera.forward[0];
+        renderer.camera.pos[1] += renderer.camera.forward[1];
     }
     if (glfwGetKey(renderer.window_ptr, GLFW_KEY_S) == GLFW_PRESS) {
-        renderer.camera.pos[0] -= camera_forward[0];
-        renderer.camera.pos[1] -= camera_forward[1];
+        renderer.camera.pos[0] -= renderer.camera.forward[0];
+        renderer.camera.pos[1] -= renderer.camera.forward[1];
     }
 
     if (glfwGetKey(renderer.window_ptr, GLFW_KEY_A) == GLFW_PRESS) {
-        renderer.camera.pos[0] -= camera_forward[1];
-        renderer.camera.pos[1] += camera_forward[0];
+        renderer.camera.pos[0] -= renderer.camera.right[0];
+        renderer.camera.pos[1] += renderer.camera.right[1];
     }
     if (glfwGetKey(renderer.window_ptr, GLFW_KEY_D) == GLFW_PRESS) {
-        renderer.camera.pos[0] += camera_forward[1];
-        renderer.camera.pos[1] -= camera_forward[0];
+        renderer.camera.pos[0] += renderer.camera.right[0];
+        renderer.camera.pos[1] -= renderer.camera.right[1];
     }
 }
 
@@ -250,6 +250,7 @@ static void resize_callback(GLFWwindow* window_ptr, int width, int height) {
     glViewport(0, 0, width, height);
     renderer.window_width = width;
     renderer.window_height = height;
+    renderer.camera.aspect_ratio = width / (float)height;
 }
 
 static void curser_pos_callback(GLFWwindow* window_ptr, double xpos, double ypos) {
