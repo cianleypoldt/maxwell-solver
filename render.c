@@ -13,6 +13,8 @@
 
 #define PI 3.14159265358979323846
 
+static float vec3_dot(float* v1, float* v2);
+
 static void vec3_norm(float* res, float* v);
 static void vec3_scale(float* res, float* v, float s);
 static void vec3_cross(float* res, float* v1, float* v2);
@@ -32,28 +34,33 @@ typedef struct {
     float up[3];
     float right[3];
 
+    float near_plane;
     float aspect_ratio;
     float fovy;
 } camera_t;
 
-// at least 1 bug!
 static void camera_update_directionals(camera_t* camera) {
-    camera->forward[0] = cosf(camera->pitch) * sinf(camera->yaw);
-    camera->forward[1] = cosf(camera->pitch) * cosf(camera->yaw);
+    // z -> up
+    //
+    camera->forward[0] = cosf(camera->pitch) * cosf(camera->yaw);
+    camera->forward[1] = cosf(camera->pitch) * sinf(camera->yaw);
     camera->forward[2] = sinf(camera->pitch);
-    // vec3_norm(camera->forward, camera->forward);
+    // vec3_scale(camera->forward, camera->forward, camera->near_plane);
 
     //sin(renderer.camera.yaw), cos(renderer.camera.yaw);
 
-    camera->right[0] = cos(camera->pitch);
-    camera->right[1] = -sin(camera->pitch);
+    camera->right[0] = sinf(camera->yaw);
+    camera->right[1] = -cosf(camera->yaw);
     camera->right[2] = 0;
     vec3_norm(camera->right, camera->right);
 
     vec3_cross(camera->up, camera->right, camera->forward);
+    vec3_norm(camera->up, camera->up);
 
-    vec3_scale(camera->right, camera->right, tanf(camera->fovy * 0.5f));
-    vec3_scale(camera->up, camera->up, tanf(camera->fovy * 0.5f) / camera->aspect_ratio);
+    // printf("%f\n", vec3_dot(camera->right, camera->up));
+
+    vec3_scale(camera->right, camera->right, tanf(camera->fovy * 0.5f) * camera->aspect_ratio);
+    vec3_scale(camera->up, camera->up, tanf(camera->fovy * 0.5f));
 }
 
 struct renderer {
@@ -84,7 +91,10 @@ void renderer_init(simctx* ctx, int width, int height) {
     renderer.window_height = height;
 
     renderer.camera.aspect_ratio = renderer.window_width / (float)renderer.window_height;
-    renderer.camera.fovy = 90;
+    renderer.camera.fovy = 20;
+    // renderer.camera.near_plane = 5;
+    renderer.max_ray_length = 100;
+    renderer.max_steps = 100;
 
     magnitude_buffer = malloc(renderer.sim->cell_count * sizeof(float));
 
@@ -136,8 +146,8 @@ void renderer_init(simctx* ctx, int width, int height) {
 
     glUniform3f(glGetUniformLocation(renderer.volumetric_prog, "voxel_size"), renderer.sim->dSx, renderer.sim->dSy, renderer.sim->dSz);
     glUniform3f(glGetUniformLocation(renderer.volumetric_prog, "dimensions"), renderer.sim->Sx, renderer.sim->Sy, renderer.sim->Sz);
-    glUniform1i(glGetUniformLocation(renderer.volumetric_prog, "max_steps"), 20);
-    glUniform1f(glGetUniformLocation(renderer.volumetric_prog, "max_ray_length"), 100.0f);
+    glUniform1i(glGetUniformLocation(renderer.volumetric_prog, "max_steps"), renderer.max_steps);
+    glUniform1f(glGetUniformLocation(renderer.volumetric_prog, "max_ray_length"), renderer.max_ray_length);
 
     renderer.camera_pos_uniform_loc = glGetUniformLocation(renderer.volumetric_prog, "camera_pos");
     renderer.camera_forward_uniform_loc = glGetUniformLocation(renderer.volumetric_prog, "camera_forward");
@@ -195,7 +205,7 @@ int should_close() {
     return glfwWindowShouldClose(renderer.window_ptr) == GLFW_TRUE;
 }
 
-#define CAMERA_SPEED_VERTICAL   0.04
+#define CAMERA_SPEED_VERTICAL   0.1
 #define CAMERA_SPEED_HORIZONTAL 0.1
 
 #define CAMERA_PITCH_SENSETIVITY 0.02
@@ -225,22 +235,26 @@ void process_input() {
         renderer.camera.pos[2] -= CAMERA_SPEED_VERTICAL;
     }
 
+    float forward[3];
+    vec3_norm(forward, renderer.camera.forward);
+    vec3_scale(forward, forward, CAMERA_SPEED_HORIZONTAL);
+
     if (glfwGetKey(renderer.window_ptr, GLFW_KEY_W) == GLFW_PRESS) {
-        renderer.camera.pos[0] += renderer.camera.forward[0];
-        renderer.camera.pos[1] += renderer.camera.forward[1];
+        renderer.camera.pos[0] += forward[0];
+        renderer.camera.pos[1] += forward[1];
     }
     if (glfwGetKey(renderer.window_ptr, GLFW_KEY_S) == GLFW_PRESS) {
-        renderer.camera.pos[0] -= renderer.camera.forward[0];
-        renderer.camera.pos[1] -= renderer.camera.forward[1];
+        renderer.camera.pos[0] -= forward[0];
+        renderer.camera.pos[1] -= forward[1];
     }
 
     if (glfwGetKey(renderer.window_ptr, GLFW_KEY_A) == GLFW_PRESS) {
-        renderer.camera.pos[0] -= renderer.camera.right[0];
-        renderer.camera.pos[1] += renderer.camera.right[1];
+        renderer.camera.pos[0] -= forward[1];
+        renderer.camera.pos[1] += forward[0];
     }
     if (glfwGetKey(renderer.window_ptr, GLFW_KEY_D) == GLFW_PRESS) {
-        renderer.camera.pos[0] += renderer.camera.right[0];
-        renderer.camera.pos[1] -= renderer.camera.right[1];
+        renderer.camera.pos[0] += forward[1];
+        renderer.camera.pos[1] -= forward[0];
     }
 }
 
@@ -270,8 +284,12 @@ static void curser_pos_callback(GLFWwindow* window_ptr, double xpos, double ypos
     prev_cursor_x = xpos;
     prev_cursor_y = ypos;
 
-    renderer.camera.pitch += 0.5 * dy * CAMERA_PITCH_SENSETIVITY;
-    renderer.camera.yaw += -0.5 * dx * CAMERA_YAW_SENSETIVITY;
+    renderer.camera.pitch -= 0.5 * dy * CAMERA_PITCH_SENSETIVITY;
+    renderer.camera.yaw -= 0.5 * dx * CAMERA_YAW_SENSETIVITY;
+}
+
+static float vec3_dot(float* v1, float* v2) {
+    return v1[0] * v2[0] + v1[1] * v2[1] + v1[2] * v2[2];
 }
 
 static void vec3_norm(float* res, float* v) {
