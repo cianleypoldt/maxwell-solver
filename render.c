@@ -158,7 +158,8 @@ void renderer_init(simctx* ctx, int width, int height) {
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     glfwSwapBuffers(renderer.window_ptr);
 
-    renderer.camera.pos[0] = -10;
+    renderer.camera.pos[0] = 30;
+    renderer.camera.yaw = 3.14;
 }
 
 void renderer_deinit() {
@@ -180,6 +181,7 @@ static float buffer_components(float* F[3], GLuint texture) {
             for (int k = 0; k < renderer.sim->Nz; k++) {
                 magnitude_buffer[idx] = sqrtf(F[0][idx] * F[0][idx] + F[1][idx] * F[1][idx] + F[2][idx] * F[2][idx]);
                 max = fmax(max, fabs(magnitude_buffer[idx]));
+                // magnitude_buffer[idx] = magnitude_buffer[idx] > 0.003 ? 0.01 : 0;
                 idx++;
             }
         }
@@ -193,8 +195,8 @@ void render_current() {
     float greatest_E = buffer_components((float* [3]){renderer.sim->Ex, renderer.sim->Ey, renderer.sim->Ez}, renderer.Etex);
     float greatest_B = buffer_components((float* [3]){renderer.sim->Hx, renderer.sim->Hy, renderer.sim->Hz}, renderer.Btex);
 
-    renderer.intensity_E_field = 0.005;
-    renderer.intensity_B_field = 0.005;
+    renderer.intensity_E_field = 0.0003;
+    renderer.intensity_B_field = 0.0003;
 
     printf("%f, %f\n", greatest_E, greatest_B);
 

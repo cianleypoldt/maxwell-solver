@@ -57,7 +57,18 @@ simctx* create_simulation(simparams parameters) {
     for (float* mat_const = ctx->Eps; mat_const < ctx->Mu + ctx->cell_count; mat_const++) {
         *mat_const = 1;
     }
-    ctx->Ex[63775] = 1;
+    for (int i = 0; i < ctx->Nx; i++) {
+        int idx = i * ctx->stride_x + 50 * ctx->stride_y;
+
+        for (int k = 0; k < ctx->Nz; k++) {
+            if (abs(k - ctx->Nz / 2) < 3)
+                ctx->Eps[idx] = 1;
+            else
+                ctx->Eps[idx] = 60;
+            ctx->Mu[idx] = 5;
+            idx++;
+        }
+    }
 
     return ctx;
 }
@@ -93,12 +104,14 @@ static void update_H_component(simctx* ctx, float timestep, float* H, float* E1,
     }
 }
 
+int t = 0;
+
 void step_simulation(simctx* ctx) {
     float half_dt = ctx->dt / 2;
     if (ctx->step_count == 0) {
         update_H_component(ctx, half_dt, ctx->Hx, ctx->Ez, ctx->dSy, ctx->stride_y, ctx->Ey, ctx->dSz, ctx->stride_z);
         update_H_component(ctx, half_dt, ctx->Hy, ctx->Ex, ctx->dSz, ctx->stride_z, ctx->Ez, ctx->dSx, ctx->stride_x);
-        update_H_component(ctx, half_dt, ctx->Hz, ctx->Ex, ctx->dSy, ctx->stride_y, ctx->Ey, ctx->dSx, ctx->stride_x);
+        update_H_component(ctx, half_dt, ctx->Hz, ctx->Ey, ctx->dSx, ctx->stride_x, ctx->Ex, ctx->dSy, ctx->stride_y);
     }
     update_E_component(ctx, half_dt, ctx->Ex, ctx->Hz, ctx->dSy, ctx->stride_y, ctx->Hy, ctx->dSz, ctx->stride_z);
     update_E_component(ctx, half_dt, ctx->Ey, ctx->Hx, ctx->dSz, ctx->stride_z, ctx->Hz, ctx->dSx, ctx->stride_x);
@@ -108,4 +121,7 @@ void step_simulation(simctx* ctx) {
     update_H_component(ctx, half_dt, ctx->Hy, ctx->Ex, ctx->dSz, ctx->stride_z, ctx->Ez, ctx->dSx, ctx->stride_x);
     update_H_component(ctx, half_dt, ctx->Hz, ctx->Ey, ctx->dSx, ctx->stride_x, ctx->Ex, ctx->dSy, ctx->stride_y);
     ctx->step_count++;
+
+    t++;
+    ctx->Ex[15 * ctx->stride_x + 15 * ctx->stride_y + 15 * ctx->stride_z] = sinf(0.01 * t);
 }

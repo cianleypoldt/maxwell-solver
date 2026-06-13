@@ -47,7 +47,7 @@ bool assign_pos_if_contact(in float half_dim_mult, in int forward_component, in 
 
 void main()
 {
-    FragColor = vec4(0.1f, 0.2f, 0.1f, 1.0f);
+    FragColor = vec4(0.0f, 0.0f, 0.0f, 1.0f);
 
     vec3 entry_pos = vec3(0.0f);
     bool entry_found = false;
@@ -121,7 +121,7 @@ void main()
     for (int i = 0; i < step_count; i++) {
         FragColor += vec4(vec3(intensity_E_field * texture3D(Etex, tex_position.zyx).r * orange), 0.0f);
         FragColor += vec4(vec3(intensity_B_field * texture3D(Btex, tex_position.zyx).r * blue), 0.0f);
-
+        FragColor += 0.0001;
         tex_position += tex_step;
     }
 }
