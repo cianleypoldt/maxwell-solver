@@ -34,20 +34,16 @@ typedef struct {
     float up[3];
     float right[3];
 
-    float near_plane;
     float aspect_ratio;
     float fovy;
 } camera_t;
 
 static void camera_update_directionals(camera_t* camera) {
     // z -> up
-    //
+
     camera->forward[0] = cosf(camera->pitch) * cosf(camera->yaw);
     camera->forward[1] = cosf(camera->pitch) * sinf(camera->yaw);
     camera->forward[2] = sinf(camera->pitch);
-    // vec3_scale(camera->forward, camera->forward, camera->near_plane);
-
-    //sin(renderer.camera.yaw), cos(renderer.camera.yaw);
 
     camera->right[0] = sinf(camera->yaw);
     camera->right[1] = -cosf(camera->yaw);
@@ -56,8 +52,6 @@ static void camera_update_directionals(camera_t* camera) {
 
     vec3_cross(camera->up, camera->right, camera->forward);
     vec3_norm(camera->up, camera->up);
-
-    // printf("%f\n", vec3_dot(camera->right, camera->up));
 
     vec3_scale(camera->right, camera->right, tanf(camera->fovy * 0.5f) * camera->aspect_ratio);
     vec3_scale(camera->up, camera->up, tanf(camera->fovy * 0.5f));
@@ -69,8 +63,10 @@ struct renderer {
     GLFWwindow* window_ptr;
     int window_width, window_height;
     camera_t camera;
-    float max_ray_length;
-    int max_steps;
+    float step_size;
+
+    float intensity_E_field;
+    float intensity_B_field;
 
     GLuint volumetric_prog, vbo, vao;
     GLuint Etex, Btex;
@@ -78,6 +74,8 @@ struct renderer {
     GLint camera_forward_uniform_loc;
     GLint camera_right_uniform_loc;
     GLint camera_up_uniform_loc;
+    GLint intensity_E_field_uniform_loc;
+    GLint intensity_B_field_uniform_loc;
 } renderer;
 
 static void resize_callback(GLFWwindow* window_ptr, int width, int height);
@@ -92,9 +90,7 @@ void renderer_init(simctx* ctx, int width, int height) {
 
     renderer.camera.aspect_ratio = renderer.window_width / (float)renderer.window_height;
     renderer.camera.fovy = 20;
-    // renderer.camera.near_plane = 5;
-    renderer.max_ray_length = 100;
-    renderer.max_steps = 100;
+    renderer.step_size = 0.01;
 
     magnitude_buffer = malloc(renderer.sim->cell_count * sizeof(float));
 
@@ -132,6 +128,8 @@ void renderer_init(simctx* ctx, int width, int height) {
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+    glTexImage3D(GL_TEXTURE_3D, 0, GL_R32F, renderer.sim->Nz, renderer.sim->Ny, renderer.sim->Nx, 0, GL_RED, GL_FLOAT, NULL);
+
     glActiveTexture(GL_TEXTURE0 + 1);
     glBindTexture(GL_TEXTURE_3D, renderer.Btex);
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
@@ -139,6 +137,7 @@ void renderer_init(simctx* ctx, int width, int height) {
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+    glTexImage3D(GL_TEXTURE_3D, 0, GL_R32F, renderer.sim->Nz, renderer.sim->Ny, renderer.sim->Nx, 0, GL_RED, GL_FLOAT, NULL);
 
     glUseProgram(renderer.volumetric_prog);
     glUniform1i(glGetUniformLocation(renderer.volumetric_prog, "Etex"), 0);
@@ -146,17 +145,20 @@ void renderer_init(simctx* ctx, int width, int height) {
 
     glUniform3f(glGetUniformLocation(renderer.volumetric_prog, "voxel_size"), renderer.sim->dSx, renderer.sim->dSy, renderer.sim->dSz);
     glUniform3f(glGetUniformLocation(renderer.volumetric_prog, "dimensions"), renderer.sim->Sx, renderer.sim->Sy, renderer.sim->Sz);
-    glUniform1i(glGetUniformLocation(renderer.volumetric_prog, "max_steps"), renderer.max_steps);
-    glUniform1f(glGetUniformLocation(renderer.volumetric_prog, "max_ray_length"), renderer.max_ray_length);
+    glUniform1f(glGetUniformLocation(renderer.volumetric_prog, "step_size"), renderer.step_size);
 
     renderer.camera_pos_uniform_loc = glGetUniformLocation(renderer.volumetric_prog, "camera_pos");
     renderer.camera_forward_uniform_loc = glGetUniformLocation(renderer.volumetric_prog, "camera_forward");
     renderer.camera_right_uniform_loc = glGetUniformLocation(renderer.volumetric_prog, "camera_right");
     renderer.camera_up_uniform_loc = glGetUniformLocation(renderer.volumetric_prog, "camera_up");
+    renderer.intensity_E_field_uniform_loc = glGetUniformLocation(renderer.volumetric_prog, "intensity_E_field");
+    renderer.intensity_B_field_uniform_loc = glGetUniformLocation(renderer.volumetric_prog, "intensity_B_field");
 
     glClearColor(0.2f, 0.3f, 0.3f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     glfwSwapBuffers(renderer.window_ptr);
+
+    renderer.camera.pos[0] = -10;
 }
 
 void renderer_deinit() {
@@ -165,27 +167,36 @@ void renderer_deinit() {
     glDeleteBuffers(1, &renderer.vbo);
     glDeleteVertexArrays(1, &renderer.vao);
     glDeleteProgram(renderer.volumetric_prog);
-
+    printf("%x\n", glGetError());
     glfwTerminate();
+    free(magnitude_buffer);
 }
 
-static void buffer_components(float* F[3], GLuint texture) {
+static float buffer_components(float* F[3], GLuint texture) {
+    float max = 0;
     for (int i = 0; i < renderer.sim->Nx; i++) {
-        for (int j = 0; j < renderer.sim->Nz; j++) {
-            int idx = i * renderer.sim->stride_x + j * renderer.sim->stride_y + 1 * renderer.sim->stride_z;
+        for (int j = 0; j < renderer.sim->Ny; j++) {
+            int idx = i * renderer.sim->stride_x + j * renderer.sim->stride_y;
             for (int k = 0; k < renderer.sim->Nz; k++) {
                 magnitude_buffer[idx] = sqrtf(F[0][idx] * F[0][idx] + F[1][idx] * F[1][idx] + F[2][idx] * F[2][idx]);
+                max = fmax(max, fabs(magnitude_buffer[idx]));
                 idx++;
             }
         }
     }
     glBindTexture(GL_TEXTURE_3D, texture);
-    glTexSubImage3D(GL_TEXTURE_3D, 0, 0, 0, 0, renderer.sim->Nx, renderer.sim->Ny, renderer.sim->Nz, GL_RED, GL_FLOAT, magnitude_buffer);
+    glTexSubImage3D(GL_TEXTURE_3D, 0, 0, 0, 0, renderer.sim->Nz, renderer.sim->Ny, renderer.sim->Nx, GL_RED, GL_FLOAT, magnitude_buffer);
+    return max;
 }
 
 void render_current() {
-    buffer_components((float* [3]){renderer.sim->Ex, renderer.sim->Ey, renderer.sim->Ez}, renderer.Etex);
-    buffer_components((float* [3]){renderer.sim->Hx, renderer.sim->Hy, renderer.sim->Hz}, renderer.Btex);
+    float greatest_E = buffer_components((float* [3]){renderer.sim->Ex, renderer.sim->Ey, renderer.sim->Ez}, renderer.Etex);
+    float greatest_B = buffer_components((float* [3]){renderer.sim->Hx, renderer.sim->Hy, renderer.sim->Hz}, renderer.Btex);
+
+    renderer.intensity_E_field = 0.005;
+    renderer.intensity_B_field = 0.005;
+
+    printf("%f, %f\n", greatest_E, greatest_B);
 
     process_input();
     camera_update_directionals(&renderer.camera);
@@ -195,6 +206,9 @@ void render_current() {
     glUniform3f(renderer.camera_forward_uniform_loc, renderer.camera.forward[0], renderer.camera.forward[1], renderer.camera.forward[2]);
     glUniform3f(renderer.camera_right_uniform_loc, renderer.camera.right[0], renderer.camera.right[1], renderer.camera.right[2]);
     glUniform3f(renderer.camera_up_uniform_loc, renderer.camera.up[0], renderer.camera.up[1], renderer.camera.up[2]);
+
+    glUniform1f(renderer.intensity_E_field_uniform_loc, renderer.intensity_E_field);
+    glUniform1f(renderer.intensity_B_field_uniform_loc, renderer.intensity_B_field);
 
     glBindVertexArray(renderer.vao);
     glDrawArrays(GL_TRIANGLES, 0, sizeof(main_quad_vertices) / (sizeof(float) * 2));
@@ -208,8 +222,8 @@ int should_close() {
 #define CAMERA_SPEED_VERTICAL   0.1
 #define CAMERA_SPEED_HORIZONTAL 0.1
 
-#define CAMERA_PITCH_SENSETIVITY 0.02
-#define CAMERA_YAW_SENSETIVITY   0.02
+#define CAMERA_PITCH_SENSETIVITY 0.008
+#define CAMERA_YAW_SENSETIVITY   0.008
 
 int g_focused = 1;
 
@@ -235,8 +249,13 @@ void process_input() {
         renderer.camera.pos[2] -= CAMERA_SPEED_VERTICAL;
     }
 
-    float forward[3];
-    vec3_norm(forward, renderer.camera.forward);
+    float forward[3] = {
+        renderer.camera.forward[0],
+        renderer.camera.forward[1],
+        0
+    };
+
+    vec3_norm(forward, forward);
     vec3_scale(forward, forward, CAMERA_SPEED_HORIZONTAL);
 
     if (glfwGetKey(renderer.window_ptr, GLFW_KEY_W) == GLFW_PRESS) {
@@ -284,8 +303,13 @@ static void curser_pos_callback(GLFWwindow* window_ptr, double xpos, double ypos
     prev_cursor_x = xpos;
     prev_cursor_y = ypos;
 
-    renderer.camera.pitch -= 0.5 * dy * CAMERA_PITCH_SENSETIVITY;
-    renderer.camera.yaw -= 0.5 * dx * CAMERA_YAW_SENSETIVITY;
+    renderer.camera.pitch -= dy * CAMERA_PITCH_SENSETIVITY;
+    if (renderer.camera.pitch < -1.5) {
+        renderer.camera.pitch = -1.5;
+    } else if (renderer.camera.pitch > 1.5) {
+        renderer.camera.pitch = 1.5;
+    }
+    renderer.camera.yaw -= dx * CAMERA_YAW_SENSETIVITY;
 }
 
 static float vec3_dot(float* v1, float* v2) {
