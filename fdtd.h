@@ -3,10 +3,18 @@
 
 typedef struct simctx simctx;
 
+enum component {
+    Ex = 0,
+    Ey,
+    Ez,
+    Hx,
+    Hy,
+    Hz
+};
+
 typedef struct {
     double size[3];
     int resolution[3];
-    double timestep;
 } simparams;
 
 simctx* create_simulation(simparams parameters);
@@ -14,7 +22,12 @@ void destroy_simulation(simctx* ctx);
 
 void step_simulation(simctx* ctx);
 
-// void apply_point_charge(simctx * ctx, double position[3]);
-// void apply_point_current(simctx * ctx, double position[3]);
+typedef struct {
+    float pos[3];
+    float rot[3];
+    float dim[3];
+} cuboid_desc_t;
 
+void add_point_source(simctx* ctx, enum component c, float pos[3], float (*value_function)(float s[3], float t), float t_begin, float duration);
+void add_cuboid_source(simctx* ctx, enum component c, const cuboid_desc_t* rect, float (*value_function)(float s[3], float t), float t_begin, float duration);
 #endif

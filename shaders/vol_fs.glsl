@@ -23,8 +23,8 @@ vec3 half_dim = 0.5 * dimensions;
 #define Y 1
 #define Z 2
 
-const vec3 orange = vec3(255, 165, 0);
-const vec3 blue = vec3(0, 0, 255);
+const vec4 orange = vec4(1.0f, 0.647f, 0.0f, 1.0f);
+const vec4 blue = vec4(0, 0, 1.0f, 1.0f);
 
 // if frontface, half_dim_mult = 1, so that half_dim_mult * half_dim[forward_component] gives frontface bound, else -1 for backface bound
 bool assign_pos_if_contact(in float half_dim_mult, in int forward_component, in int horizontal_component, in int vertical_component, inout vec3 contact_pos) {
@@ -47,7 +47,7 @@ bool assign_pos_if_contact(in float half_dim_mult, in int forward_component, in 
 
 void main()
 {
-    FragColor = vec4(0.0f, 0.0f, 0.0f, 1.0f);
+    FragColor = vec4(0.0f, 0.0f, 0.0f, 0.0f);
 
     vec3 entry_pos = vec3(0.0f);
     bool entry_found = false;
@@ -113,15 +113,27 @@ void main()
     else return;
 
     vec3 step = (ray_norm * step_size);
-    int step_count = int(length((exit_pos - entry_pos)) / step_size);
+    int step_count = int(ceil(length((exit_pos - entry_pos)) / step_size));
 
     vec3 tex_position = entry_pos / dimensions + vec3(0.5);
     vec3 tex_step = step / dimensions;
 
     for (int i = 0; i < step_count; i++) {
-        FragColor += vec4(vec3(intensity_E_field * texture3D(Etex, tex_position.zyx).r * orange), 0.0f);
-        FragColor += vec4(vec3(intensity_B_field * texture3D(Btex, tex_position.zyx).r * blue), 0.0f);
-        FragColor += 0.0001;
+        if (FragColor.a > 1) break;
+        // float field = texture(Etex, tex_position.zyx).r;
+        //
+        // field = log(1.0 + field * 5.0f);
+        //
+        // float alpha = field * 0.5 * step_size;
+        //
+        // vec3 emission = orange.rgb * field * 0.2;
+        //
+        // FragColor.rgb += emission * (1.0 - FragColor.a);
+        // FragColor.a += alpha * (1.0 - FragColor.a);
+        FragColor += intensity_E_field * texture3D(Etex, tex_position.zyx).r * orange;
+        FragColor += intensity_B_field * texture3D(Btex, tex_position.zyx).r * blue;
+        FragColor += vec4(0.0001);
+
         tex_position += tex_step;
     }
 }

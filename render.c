@@ -58,7 +58,7 @@ static void camera_update_directionals(camera_t* camera) {
 }
 
 struct renderer {
-    simctx* sim;
+    const simctx* sim;
 
     GLFWwindow* window_ptr;
     int window_width, window_height;
@@ -81,7 +81,7 @@ struct renderer {
 static void resize_callback(GLFWwindow* window_ptr, int width, int height);
 static void curser_pos_callback(GLFWwindow* window_ptr, double xpos, double ypos);
 
-void renderer_init(simctx* ctx, int width, int height) {
+void renderer_init(const simctx* ctx, int width, int height) {
     memset(&renderer, 0, sizeof(renderer));
 
     renderer.sim = ctx;
@@ -90,7 +90,7 @@ void renderer_init(simctx* ctx, int width, int height) {
 
     renderer.camera.aspect_ratio = renderer.window_width / (float)renderer.window_height;
     renderer.camera.fovy = 20;
-    renderer.step_size = 0.01;
+    renderer.step_size = 0.005;
 
     magnitude_buffer = malloc(renderer.sim->cell_count * sizeof(float));
 
@@ -123,8 +123,8 @@ void renderer_init(simctx* ctx, int width, int height) {
 
     glActiveTexture(GL_TEXTURE0 + 0);
     glBindTexture(GL_TEXTURE_3D, renderer.Etex);
-    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
@@ -132,8 +132,8 @@ void renderer_init(simctx* ctx, int width, int height) {
 
     glActiveTexture(GL_TEXTURE0 + 1);
     glBindTexture(GL_TEXTURE_3D, renderer.Btex);
-    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
@@ -158,8 +158,10 @@ void renderer_init(simctx* ctx, int width, int height) {
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     glfwSwapBuffers(renderer.window_ptr);
 
-    renderer.camera.pos[0] = 30;
+    renderer.camera.pos[2] = 1;
+    renderer.camera.pos[0] = 1;
     renderer.camera.yaw = 3.14;
+    renderer.camera.pitch = -1.0;
 }
 
 void renderer_deinit() {
@@ -173,32 +175,29 @@ void renderer_deinit() {
     free(magnitude_buffer);
 }
 
-static float buffer_components(float* F[3], GLuint texture) {
-    float max = 0;
+static void buffer_components(float* F[3], GLuint texture) {
+#pragma omp parallel for collapse(2) schedule(static)
     for (int i = 0; i < renderer.sim->Nx; i++) {
         for (int j = 0; j < renderer.sim->Ny; j++) {
             int idx = i * renderer.sim->stride_x + j * renderer.sim->stride_y;
             for (int k = 0; k < renderer.sim->Nz; k++) {
                 magnitude_buffer[idx] = sqrtf(F[0][idx] * F[0][idx] + F[1][idx] * F[1][idx] + F[2][idx] * F[2][idx]);
-                max = fmax(max, fabs(magnitude_buffer[idx]));
-                // magnitude_buffer[idx] = magnitude_buffer[idx] > 0.003 ? 0.01 : 0;
                 idx++;
             }
         }
     }
     glBindTexture(GL_TEXTURE_3D, texture);
     glTexSubImage3D(GL_TEXTURE_3D, 0, 0, 0, 0, renderer.sim->Nz, renderer.sim->Ny, renderer.sim->Nx, GL_RED, GL_FLOAT, magnitude_buffer);
-    return max;
 }
 
 void render_current() {
-    float greatest_E = buffer_components((float* [3]){renderer.sim->Ex, renderer.sim->Ey, renderer.sim->Ez}, renderer.Etex);
-    float greatest_B = buffer_components((float* [3]){renderer.sim->Hx, renderer.sim->Hy, renderer.sim->Hz}, renderer.Btex);
+    buffer_components((float* [3]){renderer.sim->Ex, renderer.sim->Ey, renderer.sim->Ez}, renderer.Etex);
+    buffer_components((float* [3]){renderer.sim->Hx, renderer.sim->Hy, renderer.sim->Hz}, renderer.Btex);
 
-    renderer.intensity_E_field = 0.0003;
-    renderer.intensity_B_field = 0.0003;
+    renderer.intensity_E_field = 1.0;
+    renderer.intensity_B_field = 1.0;
 
-    printf("%f, %f\n", greatest_E, greatest_B);
+    // printf("%f, %f\n", greatest_E, greatest_B);
 
     process_input();
     camera_update_directionals(&renderer.camera);
@@ -221,8 +220,8 @@ int should_close() {
     return glfwWindowShouldClose(renderer.window_ptr) == GLFW_TRUE;
 }
 
-#define CAMERA_SPEED_VERTICAL   0.1
-#define CAMERA_SPEED_HORIZONTAL 0.1
+#define CAMERA_SPEED_VERTICAL   0.01
+#define CAMERA_SPEED_HORIZONTAL 0.01
 
 #define CAMERA_PITCH_SENSETIVITY 0.008
 #define CAMERA_YAW_SENSETIVITY   0.008
