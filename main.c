@@ -3,7 +3,7 @@
 #include <math.h>
 #include <stdio.h>
 
-float sin_source(float s[3], float t) {
+float sin_source(float s[3], float uv[3], float t, float prev) {
     return sin(s[0]) * sin(s[1]) * 0.02 * sinf(10 * t * M_PI);
 }
 
@@ -12,12 +12,15 @@ int main() {
 
     simctx* sim = create_simulation(parameters);
 
-    cuboid_desc_t cuboid = {
-        .pos = {0.5f, 1.0f, 0.1f},
-        .rot = {1.5f, 1.0f, 0.0f},
-        .dim = {0.4f, 0.2f, 0.01f}
-    };
-    add_cuboid_source(sim, Ez, &cuboid, &sin_source, 0, 0);
+    add_cuboid_source(
+        sim,
+        Ez,
+        (float[3]){0.5f, 1.0f, 0.1f},
+        (float[3]){0.1f, 0.2f, 0.02f},
+        &sin_source,
+        0,
+        0
+    );
 
     renderer_init(sim, 800, 600);
 

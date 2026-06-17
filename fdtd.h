@@ -26,8 +26,11 @@ typedef struct {
     float pos[3];
     float rot[3];
     float dim[3];
-} cuboid_desc_t;
+} cuboid_desc;
 
-void add_point_source(simctx* ctx, enum component c, float pos[3], float (*value_function)(float s[3], float t), float t_begin, float duration);
-void add_cuboid_source(simctx* ctx, enum component c, const cuboid_desc_t* rect, float (*value_function)(float s[3], float t), float t_begin, float duration);
+typedef float (*value_fn)(float[3], float[3], float, float);
+
+void add_point_source(simctx* ctx, enum component c, float pos[3], value_fn fn, float t_begin, float duration);
+void add_cuboid_source(simctx* ctx, enum component c, const cuboid_desc* cuboid, value_fn fn, float t_begin, float duration);
+
 #endif
