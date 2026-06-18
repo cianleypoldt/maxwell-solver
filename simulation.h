@@ -17,6 +17,7 @@ typedef struct {
     float (*value_fn)(float[3], float[3], float, float);
     float t_begin, t_end;
     int component;
+    int is_point;
 } source_type;
 
 struct simctx {
