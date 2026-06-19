@@ -7,7 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define COMPONENTS_PER_CELL 8
+#define COMPONENTS_PER_CELL 9
 
 static void update_E_component(
     simctx* restrict ctx,
@@ -40,7 +40,7 @@ static void vec3_rotate_euler(float res[3], const float v[3], float roll, float 
 static float get_CFL_max_timestep(const simctx* ctx, float max_c);
 
 simctx* create_simulation(simparams parameters) {
-    simctx* ctx = malloc(sizeof(simctx));
+    simctx* ctx = calloc(1, sizeof(simctx));
 
     ctx->Sx = parameters.size[0];
     ctx->Sy = parameters.size[1];
@@ -74,13 +74,16 @@ simctx* create_simulation(simparams parameters) {
     ctx->Hz = ctx->field_mem + 5 * ctx->cell_count;
     ctx->Eps = ctx->field_mem + 6 * ctx->cell_count;
     ctx->Mu = ctx->field_mem + 7 * ctx->cell_count;
+    ctx->Sigma = ctx->field_mem + 8 * ctx->cell_count;
 
     // 0-init field components
     memset(ctx->field_mem, 0, (char*)ctx->Eps - (char*)ctx->field_mem);
 
     // 1-init eps and mu
-    for (float* mat_const = ctx->Eps; mat_const < ctx->Mu + ctx->cell_count; mat_const++) {
-        *mat_const = 1;
+    for (int i = 0; i < ctx->cell_count; i++) {
+        ctx->Eps[i] = 1;
+        ctx->Mu[i] = 1;
+        ctx->Sigma[i] = 1;
     }
 
     return ctx;
@@ -148,7 +151,7 @@ void add_cuboid_source(simctx* ctx, enum component c, const cuboid_desc* cuboid,
     ctx->n_sources++;
 }
 
-void add_cuboid_material(simctx* ctx, const cuboid_desc* cuboid_desc, value_fn fn_eps, value_fn fn_mu) {
+void add_cuboid_material(simctx* ctx, const cuboid_desc* cuboid_desc, value_fn fn_eps, value_fn fn_mu, value_fn fn_sigma) {
     cuboid_type cuboid;
     init_cuboid(ctx, &cuboid, cuboid_desc);
 
@@ -159,6 +162,9 @@ void add_cuboid_material(simctx* ctx, const cuboid_desc* cuboid_desc, value_fn f
 
     if (fn_mu)
         apply_cuboid_volume(ctx, ctx->Mu, &cuboid, time, fn_mu);
+
+    if (fn_sigma)
+        apply_cuboid_volume(ctx, ctx->Sigma, &cuboid, time, fn_sigma);
 }
 
 static void update_E_component(simctx* restrict ctx, float timestep, float* restrict E, float* restrict H1, float H1_diff, int H1_stride, float* restrict H2, float H2_diff, int H2_stride) {
@@ -167,8 +173,10 @@ static void update_E_component(simctx* restrict ctx, float timestep, float* rest
         for (int j = 1; j < ctx->Ny - 1; j++) {
             int idx = i * ctx->stride_x + j * ctx->stride_y + 1 * ctx->stride_z;
             for (int k = 1; k < ctx->Nz - 1; k++) {
-                float curl = (H1[idx] - H1[idx - H1_stride]) / H1_diff - (H2[idx] - H2[idx - H2_stride]) / H2_diff;
-                E[idx] += (timestep / ctx->Eps[idx]) * curl;
+                float curl = (H1[idx] - H1[idx - H1_stride]) / H1_diff -
+                             (H2[idx] - H2[idx - H2_stride]) / H2_diff;
+                float eps = ctx->Eps[idx];
+                E[idx] = (E[idx] + (timestep / eps) * curl) / (1.0f + (timestep * ctx->Sigma[idx]) / eps);
                 idx += ctx->stride_z;
             }
         }
@@ -181,7 +189,8 @@ static void update_H_component(simctx* restrict ctx, float timestep, float* rest
         for (int j = 1; j < ctx->Ny - 1; j++) {
             int idx = i * ctx->stride_x + j * ctx->stride_y + 1 * ctx->stride_z;
             for (int k = 1; k < ctx->Nz - 1; k++) {
-                float curl = (E1[idx + E1_stride] - E1[idx]) / E1_diff - (E2[idx + E2_stride] - E2[idx]) / E2_diff;
+                float curl = (E1[idx + E1_stride] - E1[idx]) / E1_diff -
+                             (E2[idx + E2_stride] - E2[idx]) / E2_diff;
                 H[idx] -= (timestep / ctx->Mu[idx]) * curl;
                 idx += ctx->stride_z;
             }
@@ -225,7 +234,7 @@ static void apply_sources(simctx* ctx) {
     float time = ctx->step_count * ctx->dt;
     for (int source_index = 0; source_index < ctx->n_sources; source_index++) {
         source_type* s = &ctx->sources[source_index];
-        if (s->t_begin > time || (s->t_end < time && s->t_end != 0)) break;
+        if (s->t_begin > time || (s->t_end < time && s->t_end != 0)) continue;
 
         float* component_ptr;
         switch (s->component) {

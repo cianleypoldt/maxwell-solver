@@ -33,6 +33,6 @@ typedef float (*value_fn)(float[3], float[3], float, float);
 void add_point_source(simctx* ctx, enum component c, float pos[3], value_fn fn, float t_begin, float duration);
 void add_cuboid_source(simctx* ctx, enum component c, const cuboid_desc* cuboid, value_fn fn, float t_begin, float duration);
 
-void add_cuboid_material(simctx* ctx, const cuboid_desc* cuboid, value_fn fn_eps, value_fn fn_mu);
+void add_cuboid_material(simctx* ctx, const cuboid_desc* cuboid, value_fn fn_eps, value_fn fn_mu, value_fn fn_sigma);
 
 #endif

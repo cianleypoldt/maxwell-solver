@@ -35,6 +35,7 @@ struct simctx {
     float *Hx, *Hy, *Hz;
     float* Eps;
     float* Mu;
+    float* Sigma;
 
     source_type sources[MAX_SOURCES];
     int n_sources;

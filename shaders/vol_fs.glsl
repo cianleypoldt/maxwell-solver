@@ -130,9 +130,16 @@ void main()
         //
         // FragColor.rgb += emission * (1.0 - FragColor.a);
         // FragColor.a += alpha * (1.0 - FragColor.a);
+        //
         FragColor += intensity_E_field * texture3D(Etex, tex_position.zyx).r * orange;
         FragColor += intensity_B_field * texture3D(Btex, tex_position.zyx).r * blue;
-        FragColor += vec4(0.0001);
+        //float val = intensity_E_field * texture3D(Etex, tex_position.zyx).r;
+        //if (val >= 0)
+        //    FragColor += val * orange;
+        //else
+        //    FragColor -= val * blue;
+
+        FragColor += vec4(0.001);
 
         tex_position += tex_step;
     }

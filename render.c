@@ -175,13 +175,21 @@ void renderer_deinit() {
     free(magnitude_buffer);
 }
 
-static void buffer_components(float* F[3], GLuint texture) {
+static void buffer_components(float* restrict Fx, float* restrict Fy, float* restrict Fz, GLuint texture) {
 #pragma omp parallel for collapse(2) schedule(static)
     for (int i = 0; i < renderer.sim->Nx; i++) {
         for (int j = 0; j < renderer.sim->Ny; j++) {
             int idx = i * renderer.sim->stride_x + j * renderer.sim->stride_y;
             for (int k = 0; k < renderer.sim->Nz; k++) {
-                magnitude_buffer[idx] = sqrtf(F[0][idx] * F[0][idx] + F[1][idx] * F[1][idx] + F[2][idx] * F[2][idx]);
+                magnitude_buffer[idx] = sqrtf(Fx[idx] * Fx[idx] + Fy[idx] * Fy[idx] + Fz[idx] * Fz[idx]);
+
+                //magnitude_buffer[idx] = (Fx[idx] - Fx[idx - renderer.sim->stride_x]) / renderer.sim->dSx +
+                //                        (Fy[idx] - Fy[idx - renderer.sim->stride_y]) / renderer.sim->dSy +
+                //                        (Fz[idx] - Fz[idx - renderer.sim->stride_z]) / renderer.sim->dSz;
+                //magnitude_buffer[idx] *= 0.01;
+
+                // magnitude_buffer[idx] = renderer.sim->Sigma[idx] * 0.001;
+
                 idx++;
             }
         }
@@ -191,8 +199,8 @@ static void buffer_components(float* F[3], GLuint texture) {
 }
 
 void render_current() {
-    buffer_components((float* [3]){renderer.sim->Ex, renderer.sim->Ey, renderer.sim->Ez}, renderer.Etex);
-    buffer_components((float* [3]){renderer.sim->Hx, renderer.sim->Hy, renderer.sim->Hz}, renderer.Btex);
+    buffer_components(renderer.sim->Ex, renderer.sim->Ey, renderer.sim->Ez, renderer.Etex);
+    buffer_components(renderer.sim->Hx, renderer.sim->Hy, renderer.sim->Hz, renderer.Btex);
 
     renderer.intensity_E_field = 1.0;
     renderer.intensity_B_field = 1.0;

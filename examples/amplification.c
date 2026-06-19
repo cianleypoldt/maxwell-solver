@@ -1,5 +1,5 @@
-#include "fdtd.h"
-#include "render.h"
+#include "../fdtd.h"
+#include "../render.h"
 
 #include <math.h>
 
