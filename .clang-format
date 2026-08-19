@@ -6,7 +6,7 @@ UseTab: Never
 ColumnLimit: 0
 
 BreakBeforeBraces: Attach
-PointerAlignment: Left
+PointerAlignment: Right
 ReferenceAlignment: Pointer
 DerivePointerAlignment: false
 BreakAfterReturnType: Automatic

@@ -3,16 +3,21 @@
 
 #include <stddef.h>
 
-typedef struct {
-    float *Ex, *Ey, *Ez;
-    float *Hx, *Hy, *Hz;
-    float *Eps, *Mu, *Sigma;
+typedef struct em_field_ptrs {
+    float* restrict Ex, * restrict Ey, * restrict Ez;
+    float* restrict Hx, * restrict Hy, * restrict Hz;
+    float* restrict inv_Eps, * restrict inv_Mu;
+    float* restrict Sigma;
 } em_field_ptrs;
 
-typedef struct {
+typedef struct em_field_spec {
     size_t Nx, Ny, Nz;
     double dSx, dSy, dSz;
     size_t stride_x, stride_y, stride_z;
+
+    size_t marigin_x_hi, marigin_x_lo;
+    size_t marigin_y_hi, marigin_y_lo;
+    size_t marigin_z_hi, marigin_z_lo;
 } em_field_spec;
 
 int init_em_field(em_field_spec* spec, em_field_ptrs* ptrs, const double size[3], const int res[3]);

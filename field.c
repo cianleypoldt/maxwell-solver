@@ -7,7 +7,7 @@
 
 #define COMPONENTS_PER_CELL 9
 
-int init_em_field(em_field_spec* spec, em_field_ptrs* ptrs, const double size[3], const int res[3]) {
+int init_em_field(em_field_spec *spec, em_field_ptrs *ptrs, const double size[3], const int res[3]) {
     spec->Nx = res[0];
     spec->Ny = res[1];
     spec->Nz = res[2];
@@ -19,6 +19,13 @@ int init_em_field(em_field_spec* spec, em_field_ptrs* ptrs, const double size[3]
     spec->stride_x = spec->Ny * spec->Nz;
     spec->stride_y = spec->Nz;
     spec->stride_z = 1;
+
+    spec->marigin_x_lo = 0;
+    spec->marigin_y_lo = 0;
+    spec->marigin_z_lo = 0;
+    spec->marigin_x_hi = res[0];
+    spec->marigin_y_hi = res[1];
+    spec->marigin_z_hi = res[2];
 
     const int cell_count = spec->Nx * spec->Ny * spec->Nz;
     ptrs->Ex = malloc(cell_count * COMPONENTS_PER_CELL * sizeof(float));
@@ -34,36 +41,36 @@ int init_em_field(em_field_spec* spec, em_field_ptrs* ptrs, const double size[3]
     ptrs->Hy = ptrs->Ex + 4 * cell_count;
     ptrs->Hz = ptrs->Ex + 5 * cell_count;
 
-    ptrs->Eps = ptrs->Ex + 6 * cell_count;
-    ptrs->Mu = ptrs->Ex + 7 * cell_count;
+    ptrs->inv_Eps = ptrs->Ex + 6 * cell_count;
+    ptrs->inv_Mu = ptrs->Ex + 7 * cell_count;
     ptrs->Sigma = ptrs->Ex + 8 * cell_count;
 
     memset(ptrs->Ex, 0, cell_count * COMPONENTS_PER_CELL * sizeof(float));
 
     for (int i = 0; i < cell_count; i++) {
-        ptrs->Eps[i] = 1;
-        ptrs->Mu[i] = 1;
+        ptrs->inv_Eps[i] = 1;
+        ptrs->inv_Mu[i] = 1;
         ptrs->Sigma[i] = 1;
     }
     return 1;
 }
 
-void destroy_em_field(em_field_ptrs* ptrs) {
+void destroy_em_field(em_field_ptrs *ptrs) {
     free(ptrs->Ex);
 }
 
-int get_em_field_cell_count(const em_field_spec* spec) {
+int get_em_field_cell_count(const em_field_spec *spec) {
     return spec->Nx * spec->Ny * spec->Nz;
 }
 
-float get_em_field_width(const em_field_spec* spec) {
+float get_em_field_width(const em_field_spec *spec) {
     return spec->dSx * spec->Nx;
 }
 
-float get_em_field_height(const em_field_spec* spec) {
+float get_em_field_height(const em_field_spec *spec) {
     return spec->dSy * spec->Ny;
 }
 
-float get_em_field_depth(const em_field_spec* spec) {
+float get_em_field_depth(const em_field_spec *spec) {
     return spec->dSz * spec->Nz;
 }
