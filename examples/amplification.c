@@ -1,4 +1,4 @@
-#include "../fdtd.h"
+#include "../simulation.h"
 #include "../render.h"
 
 #include <math.h>
@@ -120,7 +120,7 @@ int main(void) {
         y += 1.4f;
     }
 
-    renderer_init(sim, 800, 600);
+    renderer_init(get_field_spec(sim), 800, 600);
 
     while (!should_close()) {
         step_simulation(sim);

@@ -1,7 +1,10 @@
-#include "fdtd.h"
+#include "simulation.h"
 #include "render.h"
 
 #include <math.h>
+#include <omp.h>
+#include <stdio.h>
+#include <time.h>
 
 static const float omega = 15.0f;
 static const float amplitude = 0.1f;
@@ -44,9 +47,9 @@ static float metal_sigma(float p[3], float uv[3], float t, float prev) {
 int main(void) {
     simparams parameters = {
         .size = {1.0f, 2.0f, 0.2f},
-        .resolution = {150, 300, 30}
+        .resolution = {150, 300, 30},
+        .boundary_type = PEC_BOUNDARY
     };
-
     simctx* sim = create_simulation(parameters);
 
     const float lambda = 2.0f * (float)M_PI / omega;
@@ -89,7 +92,6 @@ int main(void) {
         feed_gap.pos[0] = x;
         feed_gap.pos[1] = y;
         feed_gap.pos[2] = 0.1f;
-
         if (i == 0)
             add_cuboid_material(
                 sim,
@@ -106,31 +108,39 @@ int main(void) {
                 metal_mu,
                 metal_sigma
             );
-
-        add_cuboid_source(
-            sim,
-            Ex,
-            &feed_gap,
-            feed_drive,
-            0,
-            0
-        );
-        //}
+        if (i == 1)
+            add_cuboid_source(
+                sim,
+                Ex,
+                &feed_gap,
+                feed_drive,
+                0,
+                0.0f
+            );
+        else
+            add_cuboid_source(
+                sim,
+                Ex,
+                &feed_gap,
+                feed_drive,
+                1.5f,
+                0.0f
+            );
 
         y += 1.4f;
     }
 
-    renderer_init(sim, 800, 600);
+    renderer_init(get_field_spec(sim), get_field_ptrs(sim), 800, 600);
 
     while (!should_close()) {
-        step_simulation(sim);
+        for (int i = 0; i < 1; i++) {
+            step_simulation(sim);
 
-        process_input();
-        render_current();
+            process_input();
+            render_current();
+        }
     }
-
     renderer_deinit();
     destroy_simulation(sim);
-
     return 0;
 }

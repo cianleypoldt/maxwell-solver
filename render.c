@@ -1,8 +1,9 @@
 #include "render.h"
 
-#include "fdtd.h"
+#include "field.h"
 #include "glad/glad.h"
 #include "GLFW/glfw3.h"
+#include "simulation.h"
 
 #include <GL/gl.h>
 #include <GL/glext.h>
@@ -58,7 +59,8 @@ static void camera_update_directionals(camera_t* camera) {
 }
 
 struct renderer {
-    const simctx* sim;
+    const em_field_spec* field_spec;
+    const em_field_ptrs* field_ptrs;
 
     GLFWwindow* window_ptr;
     int window_width, window_height;
@@ -81,10 +83,11 @@ struct renderer {
 static void resize_callback(GLFWwindow* window_ptr, int width, int height);
 static void curser_pos_callback(GLFWwindow* window_ptr, double xpos, double ypos);
 
-void renderer_init(const simctx* ctx, int width, int height) {
+void renderer_init(const em_field_spec* spec, const em_field_ptrs* ptrs, int width, int height) {
     memset(&renderer, 0, sizeof(renderer));
 
-    renderer.sim = ctx;
+    renderer.field_spec = spec;
+    renderer.field_ptrs = ptrs;
     renderer.window_width = width;
     renderer.window_height = height;
 
@@ -92,7 +95,7 @@ void renderer_init(const simctx* ctx, int width, int height) {
     renderer.camera.fovy = 20;
     renderer.step_size = 0.005;
 
-    magnitude_buffer = malloc(renderer.sim->cell_count * sizeof(float));
+    magnitude_buffer = malloc(get_em_field_cell_count(renderer.field_spec) * sizeof(float));
 
     glfwInit();
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
@@ -128,7 +131,7 @@ void renderer_init(const simctx* ctx, int width, int height) {
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
-    glTexImage3D(GL_TEXTURE_3D, 0, GL_R32F, renderer.sim->Nz, renderer.sim->Ny, renderer.sim->Nx, 0, GL_RED, GL_FLOAT, NULL);
+    glTexImage3D(GL_TEXTURE_3D, 0, GL_R32F, renderer.field_spec->Nz, renderer.field_spec->Ny, renderer.field_spec->Nx, 0, GL_RED, GL_FLOAT, NULL);
 
     glActiveTexture(GL_TEXTURE0 + 1);
     glBindTexture(GL_TEXTURE_3D, renderer.Btex);
@@ -137,15 +140,20 @@ void renderer_init(const simctx* ctx, int width, int height) {
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
-    glTexImage3D(GL_TEXTURE_3D, 0, GL_R32F, renderer.sim->Nz, renderer.sim->Ny, renderer.sim->Nx, 0, GL_RED, GL_FLOAT, NULL);
+    glTexImage3D(GL_TEXTURE_3D, 0, GL_R32F, renderer.field_spec->Nz, renderer.field_spec->Ny, renderer.field_spec->Nx, 0, GL_RED, GL_FLOAT, NULL);
 
     glUseProgram(renderer.volumetric_prog);
     glUniform1i(glGetUniformLocation(renderer.volumetric_prog, "Etex"), 0);
     glUniform1i(glGetUniformLocation(renderer.volumetric_prog, "Btex"), 1);
 
-    glUniform3f(glGetUniformLocation(renderer.volumetric_prog, "voxel_size"), renderer.sim->dSx, renderer.sim->dSy, renderer.sim->dSz);
-    glUniform3f(glGetUniformLocation(renderer.volumetric_prog, "dimensions"), renderer.sim->Sx, renderer.sim->Sy, renderer.sim->Sz);
+    glUniform3f(glGetUniformLocation(renderer.volumetric_prog, "voxel_size"), renderer.field_spec->dSx, renderer.field_spec->dSy, renderer.field_spec->dSz);
     glUniform1f(glGetUniformLocation(renderer.volumetric_prog, "step_size"), renderer.step_size);
+    float dims[3] = {
+        get_em_field_width(renderer.field_spec),
+        get_em_field_height(renderer.field_spec),
+        get_em_field_depth(renderer.field_spec),
+    };
+    glUniform3f(glGetUniformLocation(renderer.volumetric_prog, "dimensions"), dims[0], dims[1], dims[2]);
 
     renderer.camera_pos_uniform_loc = glGetUniformLocation(renderer.volumetric_prog, "camera_pos");
     renderer.camera_forward_uniform_loc = glGetUniformLocation(renderer.volumetric_prog, "camera_forward");
@@ -177,10 +185,10 @@ void renderer_deinit() {
 
 static void buffer_components(float* restrict Fx, float* restrict Fy, float* restrict Fz, GLuint texture) {
 #pragma omp parallel for collapse(2) schedule(static)
-    for (int i = 0; i < renderer.sim->Nx; i++) {
-        for (int j = 0; j < renderer.sim->Ny; j++) {
-            int idx = i * renderer.sim->stride_x + j * renderer.sim->stride_y;
-            for (int k = 0; k < renderer.sim->Nz; k++) {
+    for (int i = 0; i < renderer.field_spec->Nx; i++) {
+        for (int j = 0; j < renderer.field_spec->Ny; j++) {
+            int idx = i * renderer.field_spec->stride_x + j * renderer.field_spec->stride_y;
+            for (int k = 0; k < renderer.field_spec->Nz; k++) {
                 magnitude_buffer[idx] = sqrtf(Fx[idx] * Fx[idx] + Fy[idx] * Fy[idx] + Fz[idx] * Fz[idx]);
 
                 //magnitude_buffer[idx] = (Fx[idx] - Fx[idx - renderer.sim->stride_x]) / renderer.sim->dSx +
@@ -195,12 +203,12 @@ static void buffer_components(float* restrict Fx, float* restrict Fy, float* res
         }
     }
     glBindTexture(GL_TEXTURE_3D, texture);
-    glTexSubImage3D(GL_TEXTURE_3D, 0, 0, 0, 0, renderer.sim->Nz, renderer.sim->Ny, renderer.sim->Nx, GL_RED, GL_FLOAT, magnitude_buffer);
+    glTexSubImage3D(GL_TEXTURE_3D, 0, 0, 0, 0, renderer.field_spec->Nz, renderer.field_spec->Ny, renderer.field_spec->Nx, GL_RED, GL_FLOAT, magnitude_buffer);
 }
 
 void render_current() {
-    buffer_components(renderer.sim->Ex, renderer.sim->Ey, renderer.sim->Ez, renderer.Etex);
-    buffer_components(renderer.sim->Hx, renderer.sim->Hy, renderer.sim->Hz, renderer.Btex);
+    buffer_components(renderer.field_ptrs->Ex, renderer.field_ptrs->Ey, renderer.field_ptrs->Ez, renderer.Etex);
+    buffer_components(renderer.field_ptrs->Hx, renderer.field_ptrs->Hy, renderer.field_ptrs->Hz, renderer.Btex);
 
     renderer.intensity_E_field = 1.0;
     renderer.intensity_B_field = 1.0;
