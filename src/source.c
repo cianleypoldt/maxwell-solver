@@ -1,0 +1,41 @@
+#include "field.h"
+#include "source.h"
+#include "cuboid.h"
+
+#include <math.h>
+
+static void vec3_rotate_euler(float res[3], const float v[3], float roll, float pitch, float yaw);
+
+int init_source_list(source_list *src_list) {
+    src_list->n_sources = 0;
+    return 1;
+}
+
+void destroy_source_list(source_list *srcs) {
+    (void)srcs;
+    return;
+}
+
+int add_source(const em_field_spec *spec, source_list *srcs, float *comp_ptr, const cuboid_desc *cuboid, value_fn fn, float t_begin, float duration) {
+    if (srcs->n_sources >= MAX_SOURCES) return 0;
+
+    source_type *src = &srcs->sources[srcs->n_sources];
+    src->value_fn = fn;
+    src->t_begin = t_begin;
+    src->t_end = duration != 0 ? t_begin + duration : 0;
+    src->component_ptr = comp_ptr;
+
+    init_cuboid(spec, &src->cuboid, cuboid);
+
+    srcs->n_sources++;
+    return 1;
+}
+
+void apply_sources(const em_field_spec *spec, const em_field_ptrs *ptrs, source_list *srcs, float time, float dt) {
+    for (int source_index = 0; source_index < srcs->n_sources; source_index++) {
+        source_type *src = &srcs->sources[source_index];
+        if (src->t_begin > time || (src->t_end < time && src->t_end != 0)) continue;
+
+        apply_cuboid_volume(spec, src->component_ptr, &src->cuboid, time, dt, src->value_fn);
+    }
+}

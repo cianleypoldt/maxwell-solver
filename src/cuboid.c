@@ -1,6 +1,7 @@
 #include "field.h"
-#include <math.h>
-#include "source.h"
+#include "cuboid.h"
+
+#include "math.h"
 
 static void vec3_rotate_euler(float res[3], const float v[3], float roll, float pitch, float yaw);
 
@@ -36,7 +37,7 @@ void init_cuboid(const em_field_spec *spec, cuboid_type *cub, const cuboid_desc 
     );
 }
 
-void apply_cuboid_volume(const em_field_spec *spec, em_field_ptrs *ptrs, float *restrict field, const cuboid_type *c, float time, value_fn fn) {
+void apply_cuboid_volume(const em_field_spec *spec, float *restrict field, const cuboid_type *c, float time, float dt, value_fn fn) {
     const int cell_pos_x = (int)floorf(c->pos[0] / spec->dSx);
     const int cell_pos_y = (int)floorf(c->pos[1] / spec->dSy);
     const int cell_pos_z = (int)floorf(c->pos[2] / spec->dSz);
@@ -114,7 +115,7 @@ void apply_cuboid_volume(const em_field_spec *spec, em_field_ptrs *ptrs, float *
                     };
 
                     field[idx] =
-                        fn(pos_ws, pos_uv, time, field[idx]);
+                        fn(pos_ws, pos_uv, time, dt, field[idx]);
                 }
                 idx++;
                 pos_ws[2] += spec->dSz;

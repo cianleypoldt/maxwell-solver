@@ -1,15 +1,14 @@
 #include "simulation.h"
-#include "render.h"
+#include "render/render.h"
 
 #include <math.h>
 #include <omp.h>
 #include <stdio.h>
-#include <time.h>
 
 static const float omega = 15.0f;
 static const float amplitude = 0.1f;
 
-static float feed_drive(float p[3], float uv[3], float t, float prev) {
+static float feed_drive(float p[3], float uv[3], float t, float dt, float prev) {
     (void)p;
     (void)uv;
     (void)prev;
@@ -17,7 +16,7 @@ static float feed_drive(float p[3], float uv[3], float t, float prev) {
     return amplitude * sinf(omega * t);
 }
 
-static float metal_eps(float p[3], float uv[3], float t, float prev) {
+static float metal_eps(float p[3], float uv[3], float t, float dt, float prev) {
     (void)p;
     (void)uv;
     (void)t;
@@ -26,7 +25,7 @@ static float metal_eps(float p[3], float uv[3], float t, float prev) {
     return 1.0f;
 }
 
-static float metal_mu(float p[3], float uv[3], float t, float prev) {
+static float metal_mu(float p[3], float uv[3], float t, float dt, float prev) {
     (void)p;
     (void)uv;
     (void)t;
@@ -35,7 +34,7 @@ static float metal_mu(float p[3], float uv[3], float t, float prev) {
     return 1.0f;
 }
 
-static float metal_sigma(float p[3], float uv[3], float t, float prev) {
+static float metal_sigma(float p[3], float uv[3], float t, float dt, float prev) {
     (void)p;
     (void)uv;
     (void)t;
@@ -50,7 +49,7 @@ int main(void) {
         .resolution = {150, 300, 30},
         .boundary_type = PEC_BOUNDARY
     };
-    simctx* sim = create_simulation(parameters);
+    simctx *sim = create_simulation(parameters);
 
     const float lambda = 2.0f * (float)M_PI / omega;
     const float dipole_length = 0.5f * lambda;
@@ -133,12 +132,10 @@ int main(void) {
     renderer_init(get_field_spec(sim), get_field_ptrs(sim), 800, 600);
 
     while (!should_close()) {
-        for (int i = 0; i < 1; i++) {
-            step_simulation(sim);
+        step_simulation(sim);
 
-            process_input();
-            render_current();
-        }
+        process_input();
+        render_current();
     }
     renderer_deinit();
     destroy_simulation(sim);

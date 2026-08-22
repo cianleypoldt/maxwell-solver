@@ -10,10 +10,10 @@ void update_E_serial(const em_field_spec *restrict spec, em_field_ptrs *restrict
     const int sy = spec->stride_y;
     const int sz = spec->stride_z;
 
-    for (int i = 1; i < spec->Nx - 1; i++) {
-        for (int j = 1; j < spec->Ny - 1; j++) {
+    for (int i = spec->marigin_x_lo; i < spec->Nx - spec->marigin_x_hi; i++) {
+        for (int j = spec->marigin_y_lo; j < spec->Ny - spec->marigin_y_hi; j++) {
             int idx = i * sx + j * sy + 1 * sz;
-            for (int k = 1; k < spec->Nz - 1; k++) {
+            for (int k = spec->marigin_z_lo; k < spec->Nz - spec->marigin_z_hi; k++) {
                 const float inv_eps = ptrs->inv_Eps[idx];
                 const float a = dt * inv_eps;
                 const float inv_denom = 1.0f / (1.0f + dt * ptrs->Sigma[idx] * inv_eps);
@@ -46,10 +46,10 @@ void update_H_serial(const em_field_spec *restrict spec, em_field_ptrs *restrict
     const int sy = spec->stride_y;
     const int sz = spec->stride_z;
 
-    for (int i = 1; i < spec->Nx - 1; i++) {
-        for (int j = 1; j < spec->Ny - 1; j++) {
+    for (int i = spec->marigin_x_lo; i < spec->Nx - spec->marigin_x_hi; i++) {
+        for (int j = spec->marigin_y_lo; j < spec->Ny - spec->marigin_y_hi; j++) {
             int idx = i * sx + j * sy + 1 * sz;
-            for (int k = 1; k < spec->Nz - 1; k++) {
+            for (int k = spec->marigin_z_lo; k < spec->Nz - spec->marigin_z_hi; k++) {
                 const float a = dt * ptrs->inv_Mu[idx];
 
                 const float curl_x = (ptrs->Ez[idx + sy] - ptrs->Ez[idx]) * inv_dSy -

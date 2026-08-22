@@ -1,22 +1,9 @@
 #ifndef SIMULATION_H
 #define SIMULATION_H
 
+#include "base.h"
+
 #include <stddef.h>
-#define MAX_SOURCES 64
-
-struct em_field_spec;
-struct em_field_ptrs;
-
-typedef struct simctx simctx;
-
-enum component {
-    Ex = 0,
-    Ey,
-    Ez,
-    Hx,
-    Hy,
-    Hz
-};
 
 enum boundary_condition {
     PEC_BOUNDARY,
@@ -29,22 +16,15 @@ typedef struct {
     enum boundary_condition boundary_type;
 } simparams;
 
+typedef struct simctx simctx;
+
 simctx *create_simulation(simparams parameters);
 void destroy_simulation(simctx *ctx);
 
 void step_simulation(simctx *ctx);
-void apply_sources(simctx *ctx);
 
 const struct em_field_spec *get_field_spec(simctx *ctx);
 const struct em_field_ptrs *get_field_ptrs(simctx *ctx);
-
-typedef struct {
-    float pos[3];
-    float rot[3];
-    float dim[3];
-} cuboid_desc;
-
-typedef float (*value_fn)(float[3], float[3], float, float);
 
 void add_point_source(simctx *ctx, enum component c, float pos[3], value_fn fn, float t_begin, float duration);
 void add_cuboid_source(simctx *ctx, enum component c, const cuboid_desc *cuboid, value_fn fn, float t_begin, float duration);

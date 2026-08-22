@@ -1,6 +1,6 @@
 #include "render.h"
 
-#include "field.h"
+#include "src/field.h"
 #include "glad/glad.h"
 #include "GLFW/glfw3.h"
 #include "simulation.h"
@@ -14,17 +14,17 @@
 
 #define PI 3.14159265358979323846
 
-static float vec3_dot(float* v1, float* v2);
+static float vec3_dot(float *v1, float *v2);
 
-static void vec3_norm(float* res, float* v);
-static void vec3_scale(float* res, float* v, float s);
-static void vec3_cross(float* res, float* v1, float* v2);
+static void vec3_norm(float *res, float *v);
+static void vec3_scale(float *res, float *v, float s);
+static void vec3_cross(float *res, float *v1, float *v2);
 
-GLuint create_program(const char* vs_path, const char* fs_path);
+GLuint create_program(const char *vs_path, const char *fs_path);
 
 float main_quad_vertices[] = {-1, -1, -1, 1, 1, 1, -1, -1, 1, -1, 1, 1};
 
-float* magnitude_buffer;
+float *magnitude_buffer;
 
 typedef struct {
     float pos[3];
@@ -39,7 +39,7 @@ typedef struct {
     float fovy;
 } camera_t;
 
-static void camera_update_directionals(camera_t* camera) {
+static void camera_update_directionals(camera_t *camera) {
     // z -> up
 
     camera->forward[0] = cosf(camera->pitch) * cosf(camera->yaw);
@@ -59,10 +59,10 @@ static void camera_update_directionals(camera_t* camera) {
 }
 
 struct renderer {
-    const em_field_spec* field_spec;
-    const em_field_ptrs* field_ptrs;
+    const em_field_spec *field_spec;
+    const em_field_ptrs *field_ptrs;
 
-    GLFWwindow* window_ptr;
+    GLFWwindow *window_ptr;
     int window_width, window_height;
     camera_t camera;
     float step_size;
@@ -80,10 +80,10 @@ struct renderer {
     GLint intensity_B_field_uniform_loc;
 } renderer;
 
-static void resize_callback(GLFWwindow* window_ptr, int width, int height);
-static void curser_pos_callback(GLFWwindow* window_ptr, double xpos, double ypos);
+static void resize_callback(GLFWwindow *window_ptr, int width, int height);
+static void curser_pos_callback(GLFWwindow *window_ptr, double xpos, double ypos);
 
-void renderer_init(const em_field_spec* spec, const em_field_ptrs* ptrs, int width, int height) {
+void renderer_init(const em_field_spec *spec, const em_field_ptrs *ptrs, int width, int height) {
     memset(&renderer, 0, sizeof(renderer));
 
     renderer.field_spec = spec;
@@ -111,13 +111,13 @@ void renderer_init(const em_field_spec* spec, const em_field_ptrs* ptrs, int wid
     gladLoadGLLoader((GLADloadproc)glfwGetProcAddress);
     glViewport(0, 0, width, height);
 
-    renderer.volumetric_prog = create_program("shaders/vol_vs.glsl", "shaders/vol_fs.glsl");
+    renderer.volumetric_prog = create_program("render/shaders/vol_vs.glsl", "render/shaders/vol_fs.glsl");
 
     glGenBuffers(1, &renderer.vbo);
     glGenVertexArrays(1, &renderer.vao);
     glBindVertexArray(renderer.vao);
     glBindBuffer(GL_ARRAY_BUFFER, renderer.vbo);
-    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void *)0);
     glEnableVertexAttribArray(0);
     glBufferData(GL_ARRAY_BUFFER, sizeof(main_quad_vertices), main_quad_vertices, GL_STATIC_DRAW);
 
@@ -183,7 +183,7 @@ void renderer_deinit() {
     free(magnitude_buffer);
 }
 
-static void buffer_components(float* restrict Fx, float* restrict Fy, float* restrict Fz, GLuint texture) {
+static void buffer_components(float *restrict Fx, float *restrict Fy, float *restrict Fz, GLuint texture) {
 #pragma omp parallel for collapse(2) schedule(static)
     for (int i = 0; i < renderer.field_spec->Nx; i++) {
         for (int j = 0; j < renderer.field_spec->Ny; j++) {
@@ -296,14 +296,14 @@ void process_input() {
 
 double prev_cursor_x, prev_cursor_y;
 
-static void resize_callback(GLFWwindow* window_ptr, int width, int height) {
+static void resize_callback(GLFWwindow *window_ptr, int width, int height) {
     glViewport(0, 0, width, height);
     renderer.window_width = width;
     renderer.window_height = height;
     renderer.camera.aspect_ratio = width / (float)height;
 }
 
-static void curser_pos_callback(GLFWwindow* window_ptr, double xpos, double ypos) {
+static void curser_pos_callback(GLFWwindow *window_ptr, double xpos, double ypos) {
     if (!g_focused) {
         return;
     }
@@ -329,11 +329,11 @@ static void curser_pos_callback(GLFWwindow* window_ptr, double xpos, double ypos
     renderer.camera.yaw -= dx * CAMERA_YAW_SENSETIVITY;
 }
 
-static float vec3_dot(float* v1, float* v2) {
+static float vec3_dot(float *v1, float *v2) {
     return v1[0] * v2[0] + v1[1] * v2[1] + v1[2] * v2[2];
 }
 
-static void vec3_norm(float* res, float* v) {
+static void vec3_norm(float *res, float *v) {
     float len = sqrtf(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
     if (fabs(len) <= 0.0001) return;
     res[0] = v[0] / len;
@@ -341,13 +341,13 @@ static void vec3_norm(float* res, float* v) {
     res[2] = v[2] / len;
 }
 
-static void vec3_scale(float* res, float* v, float s) {
+static void vec3_scale(float *res, float *v, float s) {
     res[0] = v[0] * s;
     res[1] = v[1] * s;
     res[2] = v[2] * s;
 }
 
-static void vec3_cross(float* res, float* v1, float* v2) {
+static void vec3_cross(float *res, float *v1, float *v2) {
     float tmp[3];
     tmp[0] = v1[1] * v2[2] - v1[2] * v2[1];
     tmp[1] = v1[2] * v2[0] - v1[0] * v2[2];
@@ -356,12 +356,12 @@ static void vec3_cross(float* res, float* v1, float* v2) {
 }
 
 struct file {
-    char* buffer;
+    char *buffer;
     int size;
 };
 
-static struct file load_file(const char* path) {
-    FILE* fp = fopen(path, "rb");
+static struct file load_file(const char *path) {
+    FILE *fp = fopen(path, "rb");
 
     if (!fp) {
         return (struct file){NULL, 0};
@@ -374,7 +374,7 @@ static struct file load_file(const char* path) {
         fclose(fp);
         return (struct file){NULL, 0};
     }
-    void* buffer = malloc(size);
+    void *buffer = malloc(size);
     if (!buffer) {
         fclose(fp);
         return (struct file){NULL, 0};
@@ -401,7 +401,7 @@ static int compile_with_logs(GLuint shader_id) {
 
     int len;
     glGetShaderiv(shader_id, GL_INFO_LOG_LENGTH, &len);
-    char* log = malloc(len + 1);
+    char *log = malloc(len + 1);
     glGetShaderInfoLog(shader_id, len + 1, NULL, log);
     log[len] = '\0';
     printf("Shader failed to compile: \n");
@@ -423,7 +423,7 @@ static int link_shader_with_logs(GLuint prog, GLuint vs, GLuint fs) {
 
     GLint len = 0;
     glGetProgramiv(prog, GL_INFO_LOG_LENGTH, &len);
-    char* log = malloc(len ? len : 1);
+    char *log = malloc(len ? len : 1);
     glGetProgramInfoLog(prog, len, NULL, log);
     printf("Failed to link shaders: \n");
     printf("%s\n", log);
@@ -432,7 +432,7 @@ static int link_shader_with_logs(GLuint prog, GLuint vs, GLuint fs) {
     return 0;
 }
 
-GLuint create_program(const char* vs_path, const char* fs_path) {
+GLuint create_program(const char *vs_path, const char *fs_path) {
     GLuint vertex_shader = glCreateShader(GL_VERTEX_SHADER);
     GLuint fragment_shader = glCreateShader(GL_FRAGMENT_SHADER);
 
@@ -440,8 +440,8 @@ GLuint create_program(const char* vs_path, const char* fs_path) {
         struct file vs = load_file(vs_path);
         struct file fs = load_file(fs_path);
 
-        const char* vs_src[] = {vs.buffer};
-        const char* fs_src[] = {fs.buffer};
+        const char *vs_src[] = {vs.buffer};
+        const char *fs_src[] = {fs.buffer};
 
         glShaderSource(vertex_shader, 1, vs_src, &vs.size);
         glShaderSource(fragment_shader, 1, fs_src, &fs.size);

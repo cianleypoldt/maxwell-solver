@@ -3,7 +3,6 @@
 #include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
-#include <omp.h>
 
 #define COMPONENTS_PER_CELL 9
 
@@ -20,12 +19,13 @@ int init_em_field(em_field_spec *spec, em_field_ptrs *ptrs, const double size[3]
     spec->stride_y = spec->Nz;
     spec->stride_z = 1;
 
-    spec->marigin_x_lo = 0;
-    spec->marigin_y_lo = 0;
-    spec->marigin_z_lo = 0;
-    spec->marigin_x_hi = res[0];
-    spec->marigin_y_hi = res[1];
-    spec->marigin_z_hi = res[2];
+    // must be >= 1 due to update kernels reading adjacent cells
+    spec->marigin_x_lo = 1;
+    spec->marigin_y_lo = 1;
+    spec->marigin_z_lo = 1;
+    spec->marigin_x_hi = 1;
+    spec->marigin_y_hi = 1;
+    spec->marigin_z_hi = 1;
 
     const int cell_count = spec->Nx * spec->Ny * spec->Nz;
     ptrs->Ex = malloc(cell_count * COMPONENTS_PER_CELL * sizeof(float));
@@ -73,4 +73,29 @@ float get_em_field_height(const em_field_spec *spec) {
 
 float get_em_field_depth(const em_field_spec *spec) {
     return spec->dSz * spec->Nz;
+}
+
+float *get_em_field_component(const em_field_ptrs *ptrs, enum component comp) {
+    float *ptr;
+    switch (comp) {
+        case Ex:
+            ptr = ptrs->Ex;
+            break;
+        case Ey:
+            ptr = ptrs->Ey;
+            break;
+        case Ez:
+            ptr = ptrs->Ez;
+            break;
+        case Hx:
+            ptr = ptrs->Hx;
+            break;
+        case Hy:
+            ptr = ptrs->Hy;
+            break;
+        case Hz:
+            ptr = ptrs->Hz;
+            break;
+    }
+    return ptr;
 }
