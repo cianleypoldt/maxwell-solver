@@ -21,6 +21,18 @@ struct simctx {
 
 static float get_CFL_max_timestep(const em_field_spec *consts, float max_c);
 
+float get_simulation_time(simctx *ctx) {
+    return ctx->dt * ctx->step_count;
+}
+
+float get_elapsed_steps(simctx *ctx) {
+    return ctx->step_count;
+}
+
+float get_timestep(simctx *ctx) {
+    return ctx->dt;
+}
+
 const struct em_field_spec *get_field_spec(simctx *ctx) {
     return &ctx->spec;
 }

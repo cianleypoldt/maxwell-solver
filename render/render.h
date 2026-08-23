@@ -1,9 +1,9 @@
 #ifndef RENDER_H
 #define RENDER_H
 
-#include "base.h"
+#include "simulation.h"
 
-void renderer_init(const struct em_field_spec *field, const struct em_field_ptrs *ptrs, int width, int height);
+void renderer_init(simctx *ctx, int width, int height);
 void renderer_deinit();
 int should_close();
 void process_input();

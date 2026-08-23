@@ -1,6 +1,6 @@
 #include "render.h"
 
-#include "src/field.h"
+#include "field.h"
 #include "glad/glad.h"
 #include "GLFW/glfw3.h"
 #include "simulation.h"
@@ -83,11 +83,11 @@ struct renderer {
 static void resize_callback(GLFWwindow *window_ptr, int width, int height);
 static void curser_pos_callback(GLFWwindow *window_ptr, double xpos, double ypos);
 
-void renderer_init(const em_field_spec *spec, const em_field_ptrs *ptrs, int width, int height) {
+void renderer_init(simctx *ctx, int width, int height) {
     memset(&renderer, 0, sizeof(renderer));
 
-    renderer.field_spec = spec;
-    renderer.field_ptrs = ptrs;
+    renderer.field_spec = get_field_spec(ctx);
+    renderer.field_ptrs = get_field_ptrs(ctx);
     renderer.window_width = width;
     renderer.window_height = height;
 

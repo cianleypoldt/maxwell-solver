@@ -26,6 +26,10 @@ void step_simulation(simctx *ctx);
 const struct em_field_spec *get_field_spec(simctx *ctx);
 const struct em_field_ptrs *get_field_ptrs(simctx *ctx);
 
+float get_simulation_time(simctx *ctx);
+float get_elapsed_steps(simctx *ctx);
+float get_timestep(simctx *ctx);
+
 void add_point_source(simctx *ctx, enum component c, float pos[3], value_fn fn, float t_begin, float duration);
 void add_cuboid_source(simctx *ctx, enum component c, const cuboid_desc *cuboid, value_fn fn, float t_begin, float duration);
 

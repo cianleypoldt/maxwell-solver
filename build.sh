@@ -1,11 +1,12 @@
 set -e
 
 mapfile -t files < <(find src -type f -name '*.c')
-files+=("third_party/glad.c")
-files+=("main.c")
-files+=("render/render.c")
+mapfile -t render_files < <(find render -type f -name '*.c')
+render_files+=("third_party/glad.c")
 
-compiler_flags=(
+files+=("main.c") # tmp
+
+compiler_flags_release=(
     "-O3"
     "-march=native"
     "-mtune=native"
@@ -24,16 +25,18 @@ include_flags=(
 link_flags=(
     "-lm"
     "-lglfw"
+    "-lhdf5"
 )
 
 if [ "$1" = "--bear" ]; then
-    bear -- gcc "${files[@]}" "${link_flags[@]}" "${include_flags[@]}"
+    bear -- gcc -o fdtd-vol3d.o "${files[@]}" "${link_flags[@]}" "${include_flags[@]}"
 else
     gcc \
       -o fdtd-vol3d.o \
-      "${compiler_flags[@]}" \
+      "${compiler_flags_release[@]}" \
       "${link_flags[@]}" \
       "${include_flags[@]}" \
       "${files[@]}" \
+      "${render_files[@]}" \
       && ./fdtd-vol3d.o
 fi

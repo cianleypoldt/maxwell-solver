@@ -1,12 +1,13 @@
-#include "../simulation.h"
-#include "../render.h"
+#include "simulation.h"
+#include "render/render.h"
 
 #include <math.h>
+#include <omp.h>
 
 static const float omega = 15.0f;
 static const float amplitude = 0.1f;
 
-static float feed_drive(float p[3], float uv[3], float t, float prev) {
+static float feed_drive(float p[3], float uv[3], float t, float dt, float prev) {
     (void)p;
     (void)uv;
     (void)prev;
@@ -14,7 +15,7 @@ static float feed_drive(float p[3], float uv[3], float t, float prev) {
     return amplitude * sinf(omega * t);
 }
 
-static float metal_eps(float p[3], float uv[3], float t, float prev) {
+static float metal_eps(float p[3], float uv[3], float t, float dt, float prev) {
     (void)p;
     (void)uv;
     (void)t;
@@ -23,7 +24,7 @@ static float metal_eps(float p[3], float uv[3], float t, float prev) {
     return 1.0f;
 }
 
-static float metal_mu(float p[3], float uv[3], float t, float prev) {
+static float metal_mu(float p[3], float uv[3], float t, float dt, float prev) {
     (void)p;
     (void)uv;
     (void)t;
@@ -32,7 +33,7 @@ static float metal_mu(float p[3], float uv[3], float t, float prev) {
     return 1.0f;
 }
 
-static float metal_sigma(float p[3], float uv[3], float t, float prev) {
+static float metal_sigma(float p[3], float uv[3], float t, float dt, float prev) {
     (void)p;
     (void)uv;
     (void)t;
@@ -44,10 +45,10 @@ static float metal_sigma(float p[3], float uv[3], float t, float prev) {
 int main(void) {
     simparams parameters = {
         .size = {1.0f, 2.0f, 0.2f},
-        .resolution = {150, 300, 30}
+        .resolution = {150, 300, 30},
+        .boundary_type = PEC_BOUNDARY
     };
-
-    simctx* sim = create_simulation(parameters);
+    simctx *sim = create_simulation(parameters);
 
     const float lambda = 2.0f * (float)M_PI / omega;
     const float dipole_length = 0.5f * lambda;
@@ -89,7 +90,6 @@ int main(void) {
         feed_gap.pos[0] = x;
         feed_gap.pos[1] = y;
         feed_gap.pos[2] = 0.1f;
-
         if (i == 0)
             add_cuboid_material(
                 sim,
@@ -106,21 +106,29 @@ int main(void) {
                 metal_mu,
                 metal_sigma
             );
-
-        add_cuboid_source(
-            sim,
-            Ex,
-            &feed_gap,
-            feed_drive,
-            0,
-            0
-        );
-        //}
+        if (i == 1)
+            add_cuboid_source(
+                sim,
+                Ex,
+                &feed_gap,
+                feed_drive,
+                0,
+                0.0f
+            );
+        else
+            add_cuboid_source(
+                sim,
+                Ex,
+                &feed_gap,
+                feed_drive,
+                1.5f,
+                0.0f
+            );
 
         y += 1.4f;
     }
 
-    renderer_init(get_field_spec(sim), 800, 600);
+    renderer_init(sim, 800, 600);
 
     while (!should_close()) {
         step_simulation(sim);
@@ -128,9 +136,7 @@ int main(void) {
         process_input();
         render_current();
     }
-
     renderer_deinit();
     destroy_simulation(sim);
-
     return 0;
 }

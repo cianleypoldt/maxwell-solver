@@ -3,6 +3,10 @@
 
 #include "base.h"
 
+//
+// include if you require direct access to field data, as done by render/ and hdf5/ extentions.
+//
+
 typedef struct em_field_ptrs {
     float *restrict Ex, *restrict Ey, *restrict Ez;
     float *restrict Hx, *restrict Hy, *restrict Hz;

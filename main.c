@@ -129,7 +129,7 @@ int main(void) {
         y += 1.4f;
     }
 
-    renderer_init(get_field_spec(sim), get_field_ptrs(sim), 800, 600);
+    renderer_init(sim, 800, 600);
 
     while (!should_close()) {
         step_simulation(sim);

@@ -14,7 +14,13 @@ enum component {
     Ez,
     Hx,
     Hy,
-    Hz
+    Hz,
+};
+
+enum mat_prop {
+    Eps,
+    Mu,
+    Sigma
 };
 
 typedef struct {
