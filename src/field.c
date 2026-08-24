@@ -6,95 +6,104 @@
 
 #define COMPONENTS_PER_CELL 9
 
-int init_em_field(em_field_spec *spec, em_field_ptrs *ptrs, const double size[3], const int res[3]) {
-    spec->Nx = res[0];
-    spec->Ny = res[1];
-    spec->Nz = res[2];
+int init_em_field(em_field *F, const double size[3], const int res[3]) {
+    F->Nx = res[0];
+    F->Ny = res[1];
+    F->Nz = res[2];
 
-    spec->dSx = size[0] / spec->Nx;
-    spec->dSy = size[1] / spec->Ny;
-    spec->dSz = size[2] / spec->Nz;
+    F->dSx = size[0] / F->Nx;
+    F->dSy = size[1] / F->Ny;
+    F->dSz = size[2] / F->Nz;
 
-    spec->stride_x = spec->Ny * spec->Nz;
-    spec->stride_y = spec->Nz;
-    spec->stride_z = 1;
+    F->stride_x = F->Ny * F->Nz;
+    F->stride_y = F->Nz;
+    F->stride_z = 1;
 
     // must be >= 1 due to update kernels reading adjacent cells
-    spec->marigin_x_lo = 1;
-    spec->marigin_y_lo = 1;
-    spec->marigin_z_lo = 1;
-    spec->marigin_x_hi = 1;
-    spec->marigin_y_hi = 1;
-    spec->marigin_z_hi = 1;
+    F->marigin_x_lo = 1;
+    F->marigin_y_lo = 1;
+    F->marigin_z_lo = 1;
+    F->marigin_x_hi = 1;
+    F->marigin_y_hi = 1;
+    F->marigin_z_hi = 1;
 
-    const int cell_count = spec->Nx * spec->Ny * spec->Nz;
-    ptrs->Ex = malloc(cell_count * COMPONENTS_PER_CELL * sizeof(float));
-    if (!ptrs->Ex) {
-        free(ptrs->Ex);
-        ptrs->Ex = NULL;
+    const int cell_count = F->Nx * F->Ny * F->Nz;
+    F->Ex = malloc(cell_count * COMPONENTS_PER_CELL * sizeof(float));
+    if (!F->Ex) {
+        free(F->Ex);
+        F->Ex = NULL;
         return -1;
     }
 
-    ptrs->Ey = ptrs->Ex + 1 * cell_count;
-    ptrs->Ez = ptrs->Ex + 2 * cell_count;
-    ptrs->Hx = ptrs->Ex + 3 * cell_count;
-    ptrs->Hy = ptrs->Ex + 4 * cell_count;
-    ptrs->Hz = ptrs->Ex + 5 * cell_count;
+    F->Ey = F->Ex + 1 * cell_count;
+    F->Ez = F->Ex + 2 * cell_count;
+    F->Hx = F->Ex + 3 * cell_count;
+    F->Hy = F->Ex + 4 * cell_count;
+    F->Hz = F->Ex + 5 * cell_count;
 
-    ptrs->inv_Eps = ptrs->Ex + 6 * cell_count;
-    ptrs->inv_Mu = ptrs->Ex + 7 * cell_count;
-    ptrs->Sigma = ptrs->Ex + 8 * cell_count;
+    F->inv_Eps = F->Ex + 6 * cell_count;
+    F->inv_Mu = F->Ex + 7 * cell_count;
+    F->Sigma = F->Ex + 8 * cell_count;
 
-    memset(ptrs->Ex, 0, cell_count * COMPONENTS_PER_CELL * sizeof(float));
+    memset(F->Ex, 0, cell_count * COMPONENTS_PER_CELL * sizeof(float));
 
     for (int i = 0; i < cell_count; i++) {
-        ptrs->inv_Eps[i] = 1;
-        ptrs->inv_Mu[i] = 1;
-        ptrs->Sigma[i] = 1;
+        F->inv_Eps[i] = 1;
+        F->inv_Mu[i] = 1;
+        F->Sigma[i] = 1;
     }
     return 1;
 }
 
-void destroy_em_field(em_field_ptrs *ptrs) {
-    free(ptrs->Ex);
+void destroy_em_field(em_field *field) {
+    free(field->Ex);
 }
 
-int get_em_field_cell_count(const em_field_spec *spec) {
-    return spec->Nx * spec->Ny * spec->Nz;
+int get_em_field_cell_count(const em_field *F) {
+    return F->Nx * F->Ny * F->Nz;
 }
 
-float get_em_field_width(const em_field_spec *spec) {
-    return spec->dSx * spec->Nx;
+float get_em_field_width(const em_field *F) {
+    return F->dSx * F->Nx;
 }
 
-float get_em_field_height(const em_field_spec *spec) {
-    return spec->dSy * spec->Ny;
+float get_em_field_height(const em_field *F) {
+    return F->dSy * F->Ny;
 }
 
-float get_em_field_depth(const em_field_spec *spec) {
-    return spec->dSz * spec->Nz;
+float get_em_field_depth(const em_field *F) {
+    return F->dSz * F->Nz;
 }
 
-float *get_em_field_component(const em_field_ptrs *ptrs, enum component comp) {
+float *get_em_field_component(const em_field *F, enum component comp) {
     float *ptr;
     switch (comp) {
-        case Ex:
-            ptr = ptrs->Ex;
+        case EX:
+            ptr = F->Ex;
             break;
-        case Ey:
-            ptr = ptrs->Ey;
+        case EY:
+            ptr = F->Ey;
             break;
-        case Ez:
-            ptr = ptrs->Ez;
+        case EZ:
+            ptr = F->Ez;
             break;
-        case Hx:
-            ptr = ptrs->Hx;
+        case HX:
+            ptr = F->Hx;
             break;
-        case Hy:
-            ptr = ptrs->Hy;
+        case HY:
+            ptr = F->Hy;
             break;
-        case Hz:
-            ptr = ptrs->Hz;
+        case HZ:
+            ptr = F->Hz;
+            break;
+        case EPS:
+            ptr = F->inv_Eps;
+            break;
+        case MU:
+            ptr = F->inv_Mu;
+            break;
+        case SIGMA:
+            ptr = F->Sigma;
             break;
     }
     return ptr;

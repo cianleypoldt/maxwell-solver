@@ -5,7 +5,7 @@
 
 static void vec3_rotate_euler(float res[3], const float v[3], float roll, float pitch, float yaw);
 
-void init_cuboid(const em_field_spec *spec, cuboid_type *cub, const cuboid_desc *desc) {
+void init_cuboid(const em_field *field, cuboid_type *cub, const cuboid_desc *desc) {
     cub->pos[0] = desc->pos[0];
     cub->pos[1] = desc->pos[1];
     cub->pos[2] = desc->pos[2];
@@ -21,56 +21,56 @@ void init_cuboid(const em_field_spec *spec, cuboid_type *cub, const cuboid_desc 
         (fabs(cub->x_axis[0]) * cub->half_dim[0] +
          fabs(cub->y_axis[0]) * cub->half_dim[1] +
          fabs(cub->z_axis[0]) * cub->half_dim[2]) /
-        spec->dSx
+        field->dSx
     );
     cub->cell_aabb[1] = (int)ceilf(
         (fabs(cub->x_axis[1]) * cub->half_dim[0] +
          fabs(cub->y_axis[1]) * cub->half_dim[1] +
          fabs(cub->z_axis[1]) * cub->half_dim[2]) /
-        spec->dSy
+        field->dSy
     );
     cub->cell_aabb[2] = (int)ceilf(
         (fabs(cub->x_axis[2]) * cub->half_dim[0] +
          fabs(cub->y_axis[2]) * cub->half_dim[1] +
          fabs(cub->z_axis[2]) * cub->half_dim[2]) /
-        spec->dSz
+        field->dSz
     );
 }
 
-void apply_cuboid_volume(const em_field_spec *spec, float *restrict field, const cuboid_type *c, float time, float dt, value_fn fn) {
-    const int cell_pos_x = (int)floorf(c->pos[0] / spec->dSx);
-    const int cell_pos_y = (int)floorf(c->pos[1] / spec->dSy);
-    const int cell_pos_z = (int)floorf(c->pos[2] / spec->dSz);
+void apply_cuboid_volume(const em_field *field, float *restrict comp_ptr, const cuboid_type *c, float time, float dt, value_fn fn) {
+    const int cell_pos_x = (int)floorf(c->pos[0] / field->dSx);
+    const int cell_pos_y = (int)floorf(c->pos[1] / field->dSy);
+    const int cell_pos_z = (int)floorf(c->pos[2] / field->dSz);
 
     const int cell_min_x = fmax(0, cell_pos_x - c->cell_aabb[0]);
     const int cell_min_y = fmax(0, cell_pos_y - c->cell_aabb[1]);
     const int cell_min_z = fmax(0, cell_pos_z - c->cell_aabb[2]);
 
-    const int cell_max_x = fmin(spec->Nx, cell_pos_x + c->cell_aabb[0]);
-    const int cell_max_y = fmin(spec->Ny, cell_pos_y + c->cell_aabb[1]);
-    const int cell_max_z = fmin(spec->Nz, cell_pos_z + c->cell_aabb[2]);
+    const int cell_max_x = fmin(field->Nx, cell_pos_x + c->cell_aabb[0]);
+    const int cell_max_y = fmin(field->Ny, cell_pos_y + c->cell_aabb[1]);
+    const int cell_max_z = fmin(field->Nz, cell_pos_z + c->cell_aabb[2]);
 
     const float x_proj_to_uv = 1.0f / (2.0f * c->half_dim[0]);
     const float y_proj_to_uv = 1.0f / (2.0f * c->half_dim[1]);
     const float z_proj_to_uv = 1.0f / (2.0f * c->half_dim[2]);
 
     // dot product derivatives
-    const float dx_x = spec->dSx * c->x_axis[0];
-    const float dx_y = spec->dSx * c->y_axis[0];
-    const float dx_z = spec->dSx * c->z_axis[0];
+    const float dx_x = field->dSx * c->x_axis[0];
+    const float dx_y = field->dSx * c->y_axis[0];
+    const float dx_z = field->dSx * c->z_axis[0];
 
-    const float dy_x = spec->dSy * c->x_axis[1];
-    const float dy_y = spec->dSy * c->y_axis[1];
-    const float dy_z = spec->dSy * c->z_axis[1];
+    const float dy_x = field->dSy * c->x_axis[1];
+    const float dy_y = field->dSy * c->y_axis[1];
+    const float dy_z = field->dSy * c->z_axis[1];
 
-    const float dz_x = spec->dSz * c->x_axis[2];
-    const float dz_y = spec->dSz * c->y_axis[2];
-    const float dz_z = spec->dSz * c->z_axis[2];
+    const float dz_x = field->dSz * c->x_axis[2];
+    const float dz_y = field->dSz * c->y_axis[2];
+    const float dz_z = field->dSz * c->z_axis[2];
 
     // first voxel world space pos
-    const float start_ws_x = cell_min_x * spec->dSx;
-    const float start_ws_y = cell_min_y * spec->dSy;
-    const float start_ws_z = cell_min_z * spec->dSz;
+    const float start_ws_x = cell_min_x * field->dSx;
+    const float start_ws_y = cell_min_y * field->dSy;
+    const float start_ws_z = cell_min_z * field->dSz;
 
     // first voxel pos in obj space
     const float rel_x = start_ws_x - c->pos[0];
@@ -97,7 +97,7 @@ void apply_cuboid_volume(const em_field_spec *spec, float *restrict field, const
         float z_proj_return_j = z_proj_return_i;
 
         for (int j = cell_min_y; j < cell_max_y; j++) {
-            int idx = i * spec->stride_x + j * spec->stride_y + cell_min_z * spec->stride_z;
+            int idx = i * field->stride_x + j * field->stride_y + cell_min_z * field->stride_z;
             pos_ws[2] = start_ws_z;
 
             float x_proj = x_proj_return_j;
@@ -114,23 +114,22 @@ void apply_cuboid_volume(const em_field_spec *spec, float *restrict field, const
                         z_proj * z_proj_to_uv + 0.5f
                     };
 
-                    field[idx] =
-                        fn(pos_ws, pos_uv, time, dt, field[idx]);
+                    comp_ptr[idx] = fn(pos_ws, pos_uv, time, dt, comp_ptr[idx]);
                 }
                 idx++;
-                pos_ws[2] += spec->dSz;
+                pos_ws[2] += field->dSz;
 
                 x_proj += dz_x;
                 y_proj += dz_y;
                 z_proj += dz_z;
             }
-            pos_ws[1] += spec->dSy;
+            pos_ws[1] += field->dSy;
 
             x_proj_return_j += dy_x;
             y_proj_return_j += dy_y;
             z_proj_return_j += dy_z;
         }
-        pos_ws[0] += spec->dSx;
+        pos_ws[0] += field->dSx;
 
         x_proj_return_i += dx_x;
         y_proj_return_i += dx_y;

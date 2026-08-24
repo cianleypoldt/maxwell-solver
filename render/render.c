@@ -59,8 +59,7 @@ static void camera_update_directionals(camera_t *camera) {
 }
 
 struct renderer {
-    const em_field_spec *field_spec;
-    const em_field_ptrs *field_ptrs;
+    const em_field *field;
 
     GLFWwindow *window_ptr;
     int window_width, window_height;
@@ -86,8 +85,7 @@ static void curser_pos_callback(GLFWwindow *window_ptr, double xpos, double ypos
 void renderer_init(simctx *ctx, int width, int height) {
     memset(&renderer, 0, sizeof(renderer));
 
-    renderer.field_spec = get_field_spec(ctx);
-    renderer.field_ptrs = get_field_ptrs(ctx);
+    renderer.field = get_field(ctx);
     renderer.window_width = width;
     renderer.window_height = height;
 
@@ -95,7 +93,7 @@ void renderer_init(simctx *ctx, int width, int height) {
     renderer.camera.fovy = 20;
     renderer.step_size = 0.005;
 
-    magnitude_buffer = malloc(get_em_field_cell_count(renderer.field_spec) * sizeof(float));
+    magnitude_buffer = malloc(get_em_field_cell_count(renderer.field) * sizeof(float));
 
     glfwInit();
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
@@ -131,7 +129,7 @@ void renderer_init(simctx *ctx, int width, int height) {
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
-    glTexImage3D(GL_TEXTURE_3D, 0, GL_R32F, renderer.field_spec->Nz, renderer.field_spec->Ny, renderer.field_spec->Nx, 0, GL_RED, GL_FLOAT, NULL);
+    glTexImage3D(GL_TEXTURE_3D, 0, GL_R32F, renderer.field->Nz, renderer.field->Ny, renderer.field->Nx, 0, GL_RED, GL_FLOAT, NULL);
 
     glActiveTexture(GL_TEXTURE0 + 1);
     glBindTexture(GL_TEXTURE_3D, renderer.Btex);
@@ -140,18 +138,18 @@ void renderer_init(simctx *ctx, int width, int height) {
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
-    glTexImage3D(GL_TEXTURE_3D, 0, GL_R32F, renderer.field_spec->Nz, renderer.field_spec->Ny, renderer.field_spec->Nx, 0, GL_RED, GL_FLOAT, NULL);
+    glTexImage3D(GL_TEXTURE_3D, 0, GL_R32F, renderer.field->Nz, renderer.field->Ny, renderer.field->Nx, 0, GL_RED, GL_FLOAT, NULL);
 
     glUseProgram(renderer.volumetric_prog);
     glUniform1i(glGetUniformLocation(renderer.volumetric_prog, "Etex"), 0);
     glUniform1i(glGetUniformLocation(renderer.volumetric_prog, "Btex"), 1);
 
-    glUniform3f(glGetUniformLocation(renderer.volumetric_prog, "voxel_size"), renderer.field_spec->dSx, renderer.field_spec->dSy, renderer.field_spec->dSz);
+    glUniform3f(glGetUniformLocation(renderer.volumetric_prog, "voxel_size"), renderer.field->dSx, renderer.field->dSy, renderer.field->dSz);
     glUniform1f(glGetUniformLocation(renderer.volumetric_prog, "step_size"), renderer.step_size);
     float dims[3] = {
-        get_em_field_width(renderer.field_spec),
-        get_em_field_height(renderer.field_spec),
-        get_em_field_depth(renderer.field_spec),
+        get_em_field_width(renderer.field),
+        get_em_field_height(renderer.field),
+        get_em_field_depth(renderer.field),
     };
     glUniform3f(glGetUniformLocation(renderer.volumetric_prog, "dimensions"), dims[0], dims[1], dims[2]);
 
@@ -178,17 +176,17 @@ void renderer_deinit() {
     glDeleteBuffers(1, &renderer.vbo);
     glDeleteVertexArrays(1, &renderer.vao);
     glDeleteProgram(renderer.volumetric_prog);
-    printf("%x\n", glGetError());
+    printf("GL Error: %x\n", glGetError());
     glfwTerminate();
     free(magnitude_buffer);
 }
 
 static void buffer_components(float *restrict Fx, float *restrict Fy, float *restrict Fz, GLuint texture) {
 #pragma omp parallel for collapse(2) schedule(static)
-    for (int i = 0; i < renderer.field_spec->Nx; i++) {
-        for (int j = 0; j < renderer.field_spec->Ny; j++) {
-            int idx = i * renderer.field_spec->stride_x + j * renderer.field_spec->stride_y;
-            for (int k = 0; k < renderer.field_spec->Nz; k++) {
+    for (int i = 0; i < renderer.field->Nx; i++) {
+        for (int j = 0; j < renderer.field->Ny; j++) {
+            int idx = i * renderer.field->stride_x + j * renderer.field->stride_y;
+            for (int k = 0; k < renderer.field->Nz; k++) {
                 magnitude_buffer[idx] = sqrtf(Fx[idx] * Fx[idx] + Fy[idx] * Fy[idx] + Fz[idx] * Fz[idx]);
 
                 //magnitude_buffer[idx] = (Fx[idx] - Fx[idx - renderer.sim->stride_x]) / renderer.sim->dSx +
@@ -203,12 +201,12 @@ static void buffer_components(float *restrict Fx, float *restrict Fy, float *res
         }
     }
     glBindTexture(GL_TEXTURE_3D, texture);
-    glTexSubImage3D(GL_TEXTURE_3D, 0, 0, 0, 0, renderer.field_spec->Nz, renderer.field_spec->Ny, renderer.field_spec->Nx, GL_RED, GL_FLOAT, magnitude_buffer);
+    glTexSubImage3D(GL_TEXTURE_3D, 0, 0, 0, 0, renderer.field->Nz, renderer.field->Ny, renderer.field->Nx, GL_RED, GL_FLOAT, magnitude_buffer);
 }
 
 void render_current() {
-    buffer_components(renderer.field_ptrs->Ex, renderer.field_ptrs->Ey, renderer.field_ptrs->Ez, renderer.Etex);
-    buffer_components(renderer.field_ptrs->Hx, renderer.field_ptrs->Hy, renderer.field_ptrs->Hz, renderer.Btex);
+    buffer_components(renderer.field->Ex, renderer.field->Ey, renderer.field->Ez, renderer.Etex);
+    buffer_components(renderer.field->Hx, renderer.field->Hy, renderer.field->Hz, renderer.Btex);
 
     renderer.intensity_E_field = 1.0;
     renderer.intensity_B_field = 1.0;

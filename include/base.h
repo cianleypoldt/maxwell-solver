@@ -5,22 +5,18 @@
 
 #define MAX_SOURCES 64
 
-struct em_field_spec;
-struct em_field_ptrs;
+struct em_field;
 
 enum component {
-    Ex = 0,
-    Ey,
-    Ez,
-    Hx,
-    Hy,
-    Hz,
-};
-
-enum mat_prop {
-    Eps,
-    Mu,
-    Sigma
+    EX = 0,
+    EY,
+    EZ,
+    HX,
+    HY,
+    HZ,
+    EPS,
+    MU,
+    SIGMA
 };
 
 typedef struct {

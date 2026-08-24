@@ -3,6 +3,8 @@ set -e
 mapfile -t files < <(find src -type f -name '*.c')
 mapfile -t render_files < <(find render -type f -name '*.c')
 render_files+=("third_party/glad.c")
+mapfile -t hdf5_files < <(find hdf5 -type f -name '*.c')
+
 
 files+=("main.c") # tmp
 
@@ -38,5 +40,6 @@ else
       "${include_flags[@]}" \
       "${files[@]}" \
       "${render_files[@]}" \
+      "${hdf5_files[@]}" \
       && ./fdtd-vol3d.o
 fi

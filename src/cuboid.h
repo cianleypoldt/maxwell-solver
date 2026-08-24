@@ -12,8 +12,8 @@ typedef struct {
     int cell_aabb[3];
 } cuboid_type;
 
-void init_cuboid(const struct em_field_spec *spec, cuboid_type *cub, const cuboid_desc *desc);
+void init_cuboid(const struct em_field *field, cuboid_type *cub, const cuboid_desc *desc);
 
-void apply_cuboid_volume(const struct em_field_spec *spec, float *restrict field, const cuboid_type *c, float time, float dt, value_fn fn);
+void apply_cuboid_volume(const struct em_field *field, float *restrict comp_ptr, const cuboid_type *c, float time, float dt, value_fn fn);
 
 #endif

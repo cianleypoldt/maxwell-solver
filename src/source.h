@@ -8,7 +8,7 @@ typedef struct {
     cuboid_type cuboid;
     value_fn value_fn;
     float t_begin, t_end;
-    float *restrict component_ptr;
+    enum component comp;
 } source_type;
 
 typedef struct {
@@ -19,8 +19,8 @@ typedef struct {
 int init_source_list(source_list *srcs);
 void destroy_source_list(source_list *srcs);
 
-int add_source(const struct em_field_spec *spec, source_list *srcs, float *comp_ptr, const cuboid_desc *cuboid, value_fn fn, float t_begin, float duration);
+int add_source(const struct em_field *field, source_list *srcs, enum component c, const cuboid_desc *cuboid, value_fn fn, float t_begin, float duration);
 // tbd if it is safe to let api mix and match
-void apply_sources(const struct em_field_spec *spec, const struct em_field_ptrs *ptrs, source_list *srcs, float time, float dt);
+void apply_sources(const struct em_field *field, source_list *srcs, float time, float dt);
 
 #endif

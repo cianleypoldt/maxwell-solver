@@ -1,3 +1,5 @@
+#include "base.h"
+
 #include "simulation.h"
 #include "render/render.h"
 
@@ -109,7 +111,7 @@ int main(void) {
         if (i == 1)
             add_cuboid_source(
                 sim,
-                Ex,
+                EX,
                 &feed_gap,
                 feed_drive,
                 0,
@@ -118,7 +120,7 @@ int main(void) {
         else
             add_cuboid_source(
                 sim,
-                Ex,
+                EX,
                 &feed_gap,
                 feed_drive,
                 1.5f,
@@ -132,10 +134,10 @@ int main(void) {
 
     while (!should_close()) {
         step_simulation(sim);
-
         process_input();
         render_current();
     }
+
     renderer_deinit();
     destroy_simulation(sim);
     return 0;

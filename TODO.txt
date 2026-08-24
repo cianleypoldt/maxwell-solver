@@ -1,0 +1,2 @@
+HDF5 add metadata, make per field metadata not per component
+materials arent time series, maybe arbitrary names (also in general)
