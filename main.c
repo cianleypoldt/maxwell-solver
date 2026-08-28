@@ -1,11 +1,5 @@
-#include "base.h"
-#include "field.h"
-#include "hdf5/h5_io.h"
 #include "simulation.h"
 #include "render/render.h"
-
-#include <math.h>
-#include <omp.h>
 #include <stdio.h>
 
 int main(void) {
@@ -16,7 +10,8 @@ int main(void) {
     };
     simctx *sim = create_simulation(parameters);
 
-    renderer_init(sim, 800, 600);
+    if (init_renderer(sim) < 0) printf("jnfrj\n");
+    fflush(stdout);
 
     while (!should_close()) {
         step_simulation(sim);
@@ -24,7 +19,7 @@ int main(void) {
         render_current();
     }
 
-    renderer_deinit();
+    deinit_renderer();
     destroy_simulation(sim);
     return 0;
 }

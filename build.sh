@@ -6,7 +6,8 @@ render_files+=("third_party/glad.c")
 mapfile -t hdf5_files < <(find hdf5 -type f -name '*.c')
 
 
-files+=("main.c") # tmp
+# files+=("examples/amplification.c")
+files+=("main.c")
 
 compiler_flags_release=(
     "-O3"
