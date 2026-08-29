@@ -43,25 +43,9 @@ struct camera {
     float view[16];
 };
 
-static void camera_build_view(struct camera *camera) {
-    mat_identity(camera->view, 4);
-
-    // translation
-    camera->view[3 + 0 * 4] = -camera->pos[0];
-    camera->view[3 + 1 * 4] = -camera->pos[1];
-    camera->view[3 + 2 * 4] = -camera->pos[2];
-
-    float conj_rot[4];
-    quat_conj(conj_rot, camera->rot);
-
-    float M[16];
-    mat4_from_quat(M, conj_rot);
-
-    mat_mul(camera->view, M, camera->view, 4, 4, 4);
-}
-
 static void camera_build_proj(struct camera *camera) {
     // axis symmetric proection
+    // TODO: simplify generic projection math maybe
     float *M = camera->proj;
 
     const float near = camera->near_plane;
@@ -85,6 +69,23 @@ static void camera_build_proj(struct camera *camera) {
     M[3 + 2 * 4] = -1;
 }
 
+static void camera_build_view(struct camera *camera) {
+    mat_identity(camera->view, 4);
+
+    // translation
+    camera->view[0 + 3 * 4] = -camera->pos[0];
+    camera->view[1 + 3 * 4] = -camera->pos[1];
+    camera->view[2 + 3 * 4] = -camera->pos[2];
+
+    float conj_rot[4];
+    quat_conj(conj_rot, camera->rot);
+
+    float M[16];
+    mat4_from_quat(M, conj_rot);
+
+    mat_mul(camera->view, M, camera->view, 4, 4, 4);
+}
+
 struct vol_uniform_locations {
     GLint camera_pos, camera_forward, camera_right, camera_up, intensity_E_field, intensity_B_field;
 };
@@ -93,21 +94,24 @@ struct uniform_locations {
     GLint proj, view, light_angle;
 };
 
+float *magnitude_buffer;
+
 struct renderctx {
     const em_field *field;
 
     struct window window;
     struct camera camera;
 
+    GLuint vbo, vao;
+    GLuint shader_prog;
+    struct uniform_locations uniforms;
+
     GLuint vol_vbo, vol_vao;
     GLuint vol_pathtracer_prog;
     GLuint vol_Etex, vol_Btex;
     float vol_step_size;
-
     struct vol_uniform_locations vol_uniforms;
-    struct uniform_locations uniforms;
 
-    GLuint vbo, vao;
 } renderer;
 
 static void init_camera() {
@@ -119,7 +123,7 @@ static void init_camera() {
     c->near_plane = 1.0f;
     c->near_plane = 100.0f;
 
-    c->rot[3] = 1.0f;
+    c->rot[0] = 1.0f;
 
     camera_build_proj(c);
     camera_build_view(c);
@@ -144,7 +148,7 @@ static void cursor_pos_callback(GLFWwindow *window, double x, double y) {
 }
 
 static int init_window(int width, int height, char *name) {
-    static struct window *w = &renderer.window;
+    struct window *w = &renderer.window;
 
     if (!glfwInit()) return -1;
 
@@ -168,6 +172,8 @@ static int init_window(int width, int height, char *name) {
     glViewport(0, 0, w->width, w->height);
     glClearColor(0.2f, 0.3f, 0.3f, 1.0f);
 
+    glfwSetInputMode(w->ptr, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+
     return 0;
 }
 
@@ -184,7 +190,7 @@ int init_renderer(simctx *ctx) {
     if (!ctx) return -1;
     renderer.field = get_field(ctx);
 
-    if (init_window(800, 600, "floating") < 0) return -1;
+    if (init_window(1400, 800, "floating") < 0) return -1;
 
     // Geometry
     glGenBuffers(1, &renderer.vbo);
@@ -192,10 +198,24 @@ int init_renderer(simctx *ctx) {
 
     glBindBuffer(GL_ARRAY_BUFFER, renderer.vbo);
     glBindVertexArray(renderer.vao);
-    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void *)0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void *)0);
     glEnableVertexAttribArray(0);
+    {
+        float fullscreen_quad_vertices[] = {-0.5f, -0.5f, -2.0f, 0.5f, -0.5f, -2.0f, 0.0f, 0.5f, -2.0f};
+        glBufferData(GL_ARRAY_BUFFER, sizeof(fullscreen_quad_vertices), fullscreen_quad_vertices, GL_STATIC_DRAW);
+    }
     glBindVertexArray(0);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+    renderer.shader_prog = create_program("render/shaders/vs.glsl", "render/shaders/fs.glsl");
+    {
+        struct uniform_locations *u = &renderer.uniforms;
+        GLuint prog = renderer.shader_prog;
+        glUseProgram(prog);
+        u->proj = glGetUniformLocation(prog, "proj");
+        u->view = glGetUniformLocation(prog, "view");
+        glUseProgram(0);
+    }
 
     // Volumetric
     // Screenspace quad for path tracing shader
@@ -242,25 +262,33 @@ int init_renderer(simctx *ctx) {
         get_em_field_height(renderer.field),
         get_em_field_depth(renderer.field)
     );
-    glUseProgram(0);
-
-    // volumetric shader dynamic uniforms
-    struct vol_uniform_locations *vds = &renderer.vol_uniforms;
-    vds->camera_pos = glGetUniformLocation(renderer.vol_pathtracer_prog, "camera_pos");
-    vds->camera_forward = glGetUniformLocation(renderer.vol_pathtracer_prog, "camera_forward");
-    vds->camera_right = glGetUniformLocation(renderer.vol_pathtracer_prog, "camera_right");
-    vds->camera_up = glGetUniformLocation(renderer.vol_pathtracer_prog, "camera_up");
-    vds->intensity_E_field = glGetUniformLocation(renderer.vol_pathtracer_prog, "intensity_E_field");
-    vds->intensity_B_field = glGetUniformLocation(renderer.vol_pathtracer_prog, "intensity_B_field");
+    {
+        // volumetric shader dynamic uniforms
+        struct vol_uniform_locations *vds = &renderer.vol_uniforms;
+        GLuint prog = renderer.vol_pathtracer_prog;
+        glUseProgram(prog);
+        vds->camera_pos = glGetUniformLocation(prog, "camera_pos");
+        vds->camera_forward = glGetUniformLocation(prog, "camera_forward");
+        vds->camera_right = glGetUniformLocation(prog, "camera_right");
+        vds->camera_up = glGetUniformLocation(prog, "camera_up");
+        vds->intensity_E_field = glGetUniformLocation(prog, "intensity_E_field");
+        vds->intensity_B_field = glGetUniformLocation(prog, "intensity_B_field");
+        glUseProgram(0);
+    }
 
     printf("GL init error: %x\n", glGetError());
+
+    magnitude_buffer = malloc(get_em_field_cell_count(renderer.field) * sizeof(float));
+
+    init_camera();
 
     return 0;
 }
 
 void deinit_renderer() {
-    glDeleteVertexArrays(1, &renderer.vao);
     glDeleteBuffers(1, &renderer.vbo);
+    glDeleteVertexArrays(1, &renderer.vao);
+    glDeleteProgram(renderer.shader_prog);
 
     glDeleteTextures(1, &renderer.vol_Etex);
     glDeleteTextures(1, &renderer.vol_Btex);
@@ -268,16 +296,53 @@ void deinit_renderer() {
     glDeleteBuffers(1, &renderer.vol_vbo);
     glDeleteProgram(renderer.vol_pathtracer_prog);
     printf("GL Error: %x\n", glGetError());
+    free(magnitude_buffer);
 
     destroy_window();
 }
 
+static void buffer_components(float *restrict Fx, float *restrict Fy, float *restrict Fz, GLuint texture) {
+    for (int i = 0; i < renderer.field->Nx; i++) {
+        for (int j = 0; j < renderer.field->Ny; j++) {
+            int idx = i * renderer.field->stride_x + j * renderer.field->stride_y;
+            for (int k = 0; k < renderer.field->Nz; k++) {
+                magnitude_buffer[idx] = sqrtf(Fx[idx] * Fx[idx] + Fy[idx] * Fy[idx] + Fz[idx] * Fz[idx]);
+
+                //magnitude_buffer[idx] = (Fx[idx] - Fx[idx - renderer.sim->stride_x]) / renderer.sim->dSx +
+                //                        (Fy[idx] - Fy[idx - renderer.sim->stride_y]) / renderer.sim->dSy +
+                //                        (Fz[idx] - Fz[idx - renderer.sim->stride_z]) / renderer.sim->dSz;
+                //magnitude_buffer[idx] *= 0.01;
+
+                // magnitude_buffer[idx] = renderer.sim->Sigma[idx] * 0.001;
+
+                idx++;
+            }
+        }
+    }
+    glBindTexture(GL_TEXTURE_3D, texture);
+    glTexSubImage3D(GL_TEXTURE_3D, 0, 0, 0, 0, renderer.field->Nz, renderer.field->Ny, renderer.field->Nx, GL_RED, GL_FLOAT, magnitude_buffer);
+}
+
 void render_current() {
-    glfwSwapBuffers(renderer.window.ptr);
     // Geometry
     // bind shader, accumulation, update uniforms, vao
     // draw geometry, collect depth and accumulation
-    //
+
+    {
+        struct uniform_locations *u = &renderer.uniforms;
+        GLuint prog = renderer.shader_prog;
+        glUseProgram(prog);
+        glUniformMatrix4fv(u->proj, 1, GL_FALSE, renderer.camera.proj);
+        glUniformMatrix4fv(u->view, 1, GL_FALSE, renderer.camera.view);
+    }
+
+    glBindVertexArray(renderer.vao);
+
+    glClearColor(0.2f, 0.3f, 0.3f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+    glfwSwapBuffers(renderer.window.ptr);
+
     // Volumme
     // bind shader, accumulation, depth, textures, update uniforms, vao
     // render volume over geometry
@@ -285,9 +350,52 @@ void render_current() {
     return;
 }
 
+#define CAMERA_SPEED_HORIZONTAL 0.2
+#define CAMERA_SPEED_VERTICAL   0.1
+
 void process_input() {
+    // TODO: Rewrite everything
+
     glfwPollEvents();
-    return;
+
+    struct window *w = &renderer.window;
+    struct camera *c = &renderer.camera;
+
+    if (glfwGetKey(w->ptr, GLFW_KEY_SPACE) == GLFW_PRESS) {
+        c->pos[1] += CAMERA_SPEED_VERTICAL;
+    }
+    if (glfwGetKey(w->ptr, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS) {
+        c->pos[1] -= CAMERA_SPEED_VERTICAL;
+    }
+
+    float q_camera_forward[4] = {0, 0, 0, -1};
+    quat_sandwitch(q_camera_forward, q_camera_forward, c->rot);
+
+    float *camera_forward = q_camera_forward + 1;
+    camera_forward[1] = 0;  // horizontal component
+    vec_normalize(camera_forward, camera_forward, 3);
+    vec_scale(camera_forward, camera_forward, CAMERA_SPEED_HORIZONTAL, 3);
+
+    if (glfwGetKey(w->ptr, GLFW_KEY_W) == GLFW_PRESS) {
+        vec_add(c->pos, c->pos, camera_forward, 3);
+    }
+    if (glfwGetKey(w->ptr, GLFW_KEY_S) == GLFW_PRESS) {
+        vec_sub(c->pos, c->pos, camera_forward, 3);
+    }
+    float camera_left[3];
+    camera_left[0] = camera_forward[2];
+    camera_left[1] = 0;
+    camera_left[2] = -camera_forward[0];
+
+    if (glfwGetKey(w->ptr, GLFW_KEY_A) == GLFW_PRESS) {
+        vec_add(c->pos, c->pos, camera_left, 3);
+    }
+    if (glfwGetKey(w->ptr, GLFW_KEY_D) == GLFW_PRESS) {
+        vec_sub(c->pos, c->pos, camera_left, 3);
+    }
+
+    camera_build_view(c);
+    mat_print(c->view, 4, 4);
 }
 
 int should_close() {

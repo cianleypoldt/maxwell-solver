@@ -14,7 +14,7 @@ int main(void) {
     fflush(stdout);
 
     while (!should_close()) {
-        step_simulation(sim);
+        // step_simulation(sim);
         process_input();
         render_current();
     }
