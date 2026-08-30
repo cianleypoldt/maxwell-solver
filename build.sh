@@ -69,5 +69,6 @@ else
       "${hdf5_files[@]}"
 fi
 
-./"$name"
+if [ -f "$name" ]; then ./"$name"; fi
+
 

@@ -195,7 +195,8 @@ static void init_camera() {
     c->near_plane = 1.0f;
     c->far_plane = 100.0f;
 
-    c->rot[0] = 1.0f;
+    c->rot[2] = 1.0f;
+    c->pos[2] = 5.0f;
 
     camera_build_proj(c);
     camera_build_view(c);
@@ -552,8 +553,6 @@ void process_input() {
 
     struct rotator cr;
     init_rotator(c->rot, &cr, 1);
-
-    printf("up: %f %f %f %f\n", cr.up[1], cr.up[2], cr.up[3], cr.up[0]);
 
     if (glfwGetKey(w->ptr, GLFW_KEY_LEFT) == GLFW_PRESS) {
         quat_sandwitch(c->rot, c->rot, cr.left);

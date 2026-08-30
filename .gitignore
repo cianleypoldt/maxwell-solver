@@ -1,3 +1,6 @@
-*.o
+**.o
 compile_commands.json
 TODO.txt
+**#*#
+**~
+**.gdb_history
