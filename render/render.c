@@ -153,7 +153,7 @@ static void init_camera() {
     c->fov_y = 45 * (M_PI / 180);
     c->aspect = (float)renderer.window.width / renderer.window.height;
     c->near_plane = 1.0f;
-    c->near_plane = 100.0f;
+    c->far_plane = 100.0f;
 
     c->rot[0] = 1.0f;
 
