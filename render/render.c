@@ -91,13 +91,31 @@ struct vol_uniform_locations {
     GLint camera_pos, camera_forward, camera_right, camera_up, intensity_E_field, intensity_B_field;
 };
 
-struct uniform_locations {
-    GLint proj, view, light_angle;
+struct border_uniform_locations {
+    GLint proj, view;
+};
+
+struct sources_uniform_locations {
+    GLint proj, view, model, light_angle;
 };
 
 struct render_obj {
     GLuint vbo, ebo, vao, shader;
     int element_count;
+};
+
+#define N_SOURCES 10
+const float source_positions[N_SOURCES][3] = {
+    {0.0f, 0.0f, 0.0f},
+    {2.0f, 5.0f, -15.0f},
+    {-1.5f, -2.2f, -2.5f},
+    {-3.8f, -2.0f, -12.3f},
+    {2.4f, -0.4f, -3.5f},
+    {-1.7f, 3.0f, -7.5f},
+    {1.3f, -2.0f, -2.5f},
+    {1.5f, 2.0f, -2.5f},
+    {1.5f, 0.2f, -1.5f},
+    {-1.3f, 1.0f, -1.5f}
 };
 
 struct renderctx {
@@ -107,21 +125,24 @@ struct renderctx {
     struct camera camera;
 
     struct render_obj volume_borders;
+    struct border_uniform_locations border_uniforms;
 
-    struct uniform_locations volume_border_uniforms;
+    struct render_obj sources;
+    struct sources_uniform_locations sources_uniforms;
 
     struct render_obj volume_pathtrace;
+
     GLuint vol_Etex, vol_Btex;
     float vol_step_size;
     struct vol_uniform_locations vol_uniforms;
     float *vol_magnitude_buffer;
-
 } renderer;
 
 #define RENDER_OBJ_COUNT 2
 
 static struct render_obj *gl_objs[] = {
     &renderer.volume_borders,
+    &renderer.sources,
     &renderer.volume_pathtrace
 };
 
@@ -198,6 +219,8 @@ GLuint create_program(const char *vs_path, const char *fs_path);
 #define VERTEX_VALUE_COUNT  3
 #define BORDER_VERTEX_COUNT 8
 
+extern float vertices[];
+
 int init_renderer(simctx *ctx) {
     memset(&renderer, 0, sizeof(struct renderctx));
 
@@ -206,7 +229,7 @@ int init_renderer(simctx *ctx) {
 
     if (init_window(1400, 800, "floating") < 0) return -1;
 
-    {  // Volume boarder
+    {  // Volume border
         struct render_obj *vb = &renderer.volume_borders;
         glGenBuffers(1, &vb->vbo);
         glGenBuffers(1, &vb->ebo);
@@ -224,14 +247,14 @@ int init_renderer(simctx *ctx) {
 
         // clang-format off
         float volume_border_vertices[] = {
-            -hdSx, -hdSx, -hdSz,
-             hdSx, -hdSx, -hdSz,
-             hdSx,  hdSx, -hdSz,
-            -hdSx,  hdSx, -hdSz,
-            -hdSx, -hdSx,  hdSz,
-             hdSx, -hdSx,  hdSz,
-             hdSx,  hdSx,  hdSz,
-            -hdSx,  hdSx,  hdSz,
+            -hdSx, -hdSy, -hdSz,
+             hdSx, -hdSy, -hdSz,
+             hdSx,  hdSy, -hdSz,
+            -hdSx,  hdSy, -hdSz,
+            -hdSx, -hdSy,  hdSz,
+             hdSx, -hdSy,  hdSz,
+             hdSx,  hdSy,  hdSz,
+            -hdSx,  hdSy,  hdSz,
         };
         // clang-format on
         glBufferData(GL_ARRAY_BUFFER, sizeof(volume_border_vertices), volume_border_vertices, GL_STATIC_DRAW);
@@ -244,7 +267,7 @@ int init_renderer(simctx *ctx) {
         };
         // clang-format on
 
-        vb->element_count = sizeof(volume_border_vertices) / sizeof(volume_border_vertices[0]);
+        vb->element_count = sizeof(volume_border_indices) / sizeof(volume_border_indices[0]);
         glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(volume_border_indices), volume_border_indices, GL_STATIC_DRAW);
 
         glBindVertexArray(0);
@@ -253,11 +276,45 @@ int init_renderer(simctx *ctx) {
 
         vb->shader = create_program("render/shaders/vs.glsl", "render/shaders/fs.glsl");
 
-        struct uniform_locations *u = &renderer.volume_border_uniforms;
+        struct border_uniform_locations *u = &renderer.border_uniforms;
         GLuint prog = vb->shader;
         glUseProgram(prog);
         u->proj = glGetUniformLocation(prog, "proj");
         u->view = glGetUniformLocation(prog, "view");
+        glUseProgram(0);
+    }
+
+    {  // Sources
+        struct render_obj *srcs = &renderer.sources;
+        glGenBuffers(1, &srcs->vbo);
+        srcs->ebo = 0;
+        glGenVertexArrays(1, &srcs->vao);
+
+        glBindBuffer(GL_ARRAY_BUFFER, srcs->vbo);
+        glBindVertexArray(srcs->vao);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void *)(0 * sizeof(float)));
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void *)(3 * sizeof(float)));
+        glEnableVertexAttribArray(1);
+
+        const float half_dim = 0.05;
+
+        glBufferData(GL_ARRAY_BUFFER, sizeof(float) * 288, vertices, GL_STATIC_DRAW);
+
+        srcs->element_count = 288 / 8;
+
+        glBindVertexArray(0);
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+        srcs->shader = create_program("render/shaders/source_vs.glsl", "render/shaders/source_fs.glsl");
+
+        struct sources_uniform_locations *u = &renderer.sources_uniforms;
+        GLuint prog = srcs->shader;
+        glUseProgram(prog);
+        u->proj = glGetUniformLocation(prog, "proj");
+        u->view = glGetUniformLocation(prog, "view");
+        u->model = glGetUniformLocation(prog, "model");
+        u->light_angle = glGetUniformLocation(prog, "light_angle");
         glUseProgram(0);
     }
 
@@ -322,6 +379,8 @@ int init_renderer(simctx *ctx) {
 
     renderer.vol_magnitude_buffer = malloc(get_em_field_cell_count(renderer.field) * sizeof(float));
 
+    glEnable(GL_DEPTH_TEST);
+
     init_camera();
 
     printf("GL init error: %x\n", glGetError());
@@ -370,6 +429,11 @@ static void buffer_components(float *restrict Fx, float *restrict Fy, float *res
 }
 
 void render_current() {
+    glDepthMask(GL_TRUE);
+    glDepthFunc(GL_LESS);
+    glEnable(GL_DEPTH_TEST);
+    // glEnable(GL_CULL_FACE);
+    // glCullFace(GL_BACK);
     glClearColor(0.2f, 0.3f, 0.3f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
@@ -379,12 +443,44 @@ void render_current() {
 
     {  // Draw Volume Borders
         struct render_obj *vb = &renderer.volume_borders;
-        struct uniform_locations *u = &renderer.volume_border_uniforms;
+        struct border_uniform_locations *u = &renderer.border_uniforms;
         glUseProgram(vb->shader);
         glUniformMatrix4fv(u->proj, 1, GL_FALSE, renderer.camera.proj);
         glUniformMatrix4fv(u->view, 1, GL_FALSE, renderer.camera.view);
         glBindVertexArray(vb->vao);
-        glDrawElements(GL_LINES, 24, GL_UNSIGNED_INT, NULL);
+        // glDrawElements(GL_LINES, vb->element_count, GL_UNSIGNED_INT, NULL);
+    }
+
+    {  // Sources
+        float axis[3] = {4, 4, -1};
+        vec_normalize(axis, axis, 3);
+        float angle = 0.3 * M_PI;
+        float s = sin(angle);
+        float rotation_axis[4] = {cos(angle), axis[0] * s, axis[1] * s, axis[2] * s};
+
+        float container_rotator[16];
+        mat4_from_quat(container_rotator, rotation_axis);
+
+        struct render_obj *srcs = &renderer.sources;
+        struct sources_uniform_locations *u = &renderer.sources_uniforms;
+        glBindVertexArray(srcs->vao);
+        glUseProgram(srcs->shader);
+        glUniformMatrix4fv(u->proj, 1, GL_FALSE, renderer.camera.proj);
+        glUniformMatrix4fv(u->view, 1, GL_FALSE, renderer.camera.view);
+        glUniform3f(u->light_angle, 0.2f, 0.2f, -1.0f);
+
+        float model[16];
+        mat_identity(model, 4);
+
+        for (int i = 0; i < N_SOURCES; i++) {
+            mat_mul(model, container_rotator, model, 4, 4, 4);
+            model[0 + 3 * 4] = source_positions[i][0];
+            model[1 + 3 * 4] = source_positions[i][1];
+            model[2 + 3 * 4] = source_positions[i][2];
+
+            glUniformMatrix4fv(u->model, 1, GL_FALSE, model);
+            glDrawArrays(GL_TRIANGLES, 0, srcs->element_count);
+        }
     }
 
     glfwSwapBuffers(renderer.window.ptr);
@@ -438,6 +534,19 @@ void process_input() {
     }
     if (glfwGetKey(w->ptr, GLFW_KEY_D) == GLFW_PRESS) {
         vec_sub(c->pos, c->pos, camera_left, 3);
+    }
+
+    const float angle = 0.01f;
+    float down[4] = {cos(-angle), sin(-angle), 0, 0};
+    quat_norm(down, down);
+    if (glfwGetKey(w->ptr, GLFW_KEY_DOWN) == GLFW_PRESS) {
+        quat_mul(c->rot, c->rot, down);
+    }
+
+    float up[4] = {cos(angle), sin(angle), 0, 0};
+    quat_norm(up, up);
+    if (glfwGetKey(w->ptr, GLFW_KEY_UP) == GLFW_PRESS) {
+        quat_mul(c->rot, c->rot, up);
     }
 
     camera_build_view(c);
@@ -518,3 +627,48 @@ GLuint create_program(const char *vs_path, const char *fs_path) {
 
     return shader_program;
 }
+
+// clang-format off
+float vertices[288] = {
+    -0.5f, -0.5f, -0.5f, 0.0f, 0.0f, -1.0f, 0.0f, 0.0f,
+    0.5f, -0.5f, -0.5f, 0.0f, 0.0f, -1.0f, 1.0f, 0.0f,
+    0.5f, 0.5f, -0.5f, 0.0f, 0.0f, -1.0f, 1.0f, 1.0f,
+    0.5f, 0.5f, -0.5f, 0.0f, 0.0f, -1.0f, 1.0f, 1.0f,
+    -0.5f, 0.5f, -0.5f, 0.0f, 0.0f, -1.0f, 0.0f, 1.0f,
+    -0.5f, -0.5f, -0.5f, 0.0f, 0.0f, -1.0f, 0.0f, 0.0f,
+
+    -0.5f, -0.5f, 0.5f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f,
+    0.5f, -0.5f, 0.5f, 0.0f, 0.0f, 1.0f, 1.0f, 0.0f,
+    0.5f, 0.5f, 0.5f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f,
+    0.5f, 0.5f, 0.5f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f,
+    -0.5f, 0.5f, 0.5f, 0.0f, 0.0f, 1.0f, 0.0f, 1.0f,
+    -0.5f, -0.5f, 0.5f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f,
+
+    -0.5f, 0.5f, 0.5f, -1.0f, 0.0f, 0.0f, 1.0f, 0.0f,
+    -0.5f, 0.5f, -0.5f, -1.0f, 0.0f, 0.0f, 1.0f, 1.0f,
+    -0.5f, -0.5f, -0.5f, -1.0f, 0.0f, 0.0f, 0.0f, 1.0f,
+    -0.5f, -0.5f, -0.5f, -1.0f, 0.0f, 0.0f, 0.0f, 1.0f,
+    -0.5f, -0.5f, 0.5f, -1.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+    -0.5f, 0.5f, 0.5f, -1.0f, 0.0f, 0.0f, 1.0f, 0.0f,
+
+    0.5f, 0.5f, 0.5f, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f,
+    0.5f, 0.5f, -0.5f, 1.0f, 0.0f, 0.0f, 1.0f, 1.0f,
+    0.5f, -0.5f, -0.5f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f,
+    0.5f, -0.5f, -0.5f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f,
+    0.5f, -0.5f, 0.5f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+    0.5f, 0.5f, 0.5f, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f,
+
+    -0.5f, -0.5f, -0.5f, 0.0f, -1.0f, 0.0f, 0.0f, 1.0f,
+    0.5f, -0.5f, -0.5f, 0.0f, -1.0f, 0.0f, 1.0f, 1.0f,
+    0.5f, -0.5f, 0.5f, 0.0f, -1.0f, 0.0f, 1.0f, 0.0f,
+    0.5f, -0.5f, 0.5f, 0.0f, -1.0f, 0.0f, 1.0f, 0.0f,
+    -0.5f, -0.5f, 0.5f, 0.0f, -1.0f, 0.0f, 0.0f, 0.0f,
+    -0.5f, -0.5f, -0.5f, 0.0f, -1.0f, 0.0f, 0.0f, 1.0f,
+
+    -0.5f, 0.5f, -0.5f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f,
+    0.5f, 0.5f, -0.5f, 0.0f, 1.0f, 0.0f, 1.0f, 1.0f,
+    0.5f, 0.5f, 0.5f, 0.0f, 1.0f, 0.0f, 1.0f, 0.0f,
+    0.5f, 0.5f, 0.5f, 0.0f, 1.0f, 0.0f, 1.0f, 0.0f,
+    -0.5f, 0.5f, 0.5f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f,
+    -0.5f, 0.5f, -0.5f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f};
+// clang-format on
