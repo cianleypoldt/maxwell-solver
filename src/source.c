@@ -32,7 +32,7 @@ int add_source(const em_field *field, source_list *srcs, enum component c, const
 }
 
 void apply_sources(const em_field *field, source_list *srcs, float time, float dt) {
-    for (int source_index = 0; source_index < srcs->n_sources; source_index++) {
+    for (size_t source_index = 0; source_index < srcs->n_sources; source_index++) {
         source_type *src = &srcs->sources[source_index];
         if (src->t_begin > time || (src->t_end < time && src->t_end != 0)) continue;
 

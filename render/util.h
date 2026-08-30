@@ -87,6 +87,16 @@ void vec_normalize(float *Res, const float *v, int n) {
     vec_scale(Res, v, 1 / len, n);
 }
 
+void vec3_cross(float *Res, const float *a, const float *b) {
+    float t0 = a[1] * b[2] - a[2] * b[1];
+    float t1 = a[2] * b[0] - a[0] * b[2];
+    float t2 = a[0] * b[1] - a[1] * b[0];
+
+    Res[0] = t0;
+    Res[1] = t1;
+    Res[2] = t2;
+}
+
 void quat_norm(float *q_out, float *q_in) {
     float len = sqrt(q_in[0] * q_in[0] + q_in[1] * q_in[1] + q_in[2] * q_in[2] + q_in[3] * q_in[3]);
     if (len != 0) {

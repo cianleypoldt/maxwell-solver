@@ -20,6 +20,13 @@ compiler_flags_release=(
     "-DNDEBUG"
 )
 
+compiler_flags_debug=(
+    "-g"
+    "-O0"
+    "-Wall"
+    "-Wextra"
+)
+
 include_flags=(
     "-Iinclude"
     "-I."
@@ -31,16 +38,36 @@ link_flags=(
     "-lhdf5"
 )
 
+name="fdtd"
+
 if [ "$1" = "--bear" ]; then
-    bear -- gcc -o fdtd-vol3d.o "${files[@]}" "${link_flags[@]}" "${include_flags[@]}"
-else
+    bear -- gcc \
+         -o "${name}.o" \
+	 "${compiler_flags_debug[@]}" \
+         "${link_flags[@]}" \
+         "${include_flags[@]}" \
+	 "${files[@]}" \
+         "${render_files[@]}" \
+	 "${hdf5_files[@]}"
+elif [ "$1" = "-d" ]; then
     gcc \
-      -o fdtd-vol3d.o \
+      -o "${name}_db.o" \
+      "${compiler_flags_debug[@]}" \
+      "${link_flags[@]}" \
+      "${include_flags[@]}" \
+      "${files[@]}" \
+      "${render_files[@]}" \
+      "${hdf5_files[@]}"
+else 
+    gcc \
+      -o "${name}.o" \
       "${compiler_flags_release[@]}" \
       "${link_flags[@]}" \
       "${include_flags[@]}" \
       "${files[@]}" \
       "${render_files[@]}" \
-      "${hdf5_files[@]}" \
-      && ./fdtd-vol3d.o
+      "${hdf5_files[@]}"
 fi
+
+./"$name"
+

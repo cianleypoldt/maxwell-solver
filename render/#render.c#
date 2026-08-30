@@ -41,8 +41,7 @@ struct camera {
     float rot[4];
 
     float proj[16];
-    float view[16];
-};
+    float view[};
 
 static void camera_build_proj(struct camera *camera) {
     // axis symmetric proection
