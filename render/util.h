@@ -87,6 +87,14 @@ void vec_normalize(float *Res, const float *v, int n) {
     vec_scale(Res, v, 1 / len, n);
 }
 
+float vec_dot(const float *a, const float *b, int n) {
+    float res = 0;
+    for (int i = 0; i < n; i++) {
+        res += a[i] * b[i];
+    }
+    return res;
+}
+
 void vec3_cross(float *Res, const float *a, const float *b) {
     float t0 = a[1] * b[2] - a[2] * b[1];
     float t1 = a[2] * b[0] - a[0] * b[2];

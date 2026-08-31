@@ -14,7 +14,7 @@ void main()
 
     vec3 reflect_dir = reflect(-light_dir, normal);
 
-    vec3 ambient = vec3(0.2f, 0.2f, 0.2f);
+    vec3 ambient = vec3(0.3f, 0.1f, 0.2f);
     vec3 diffuse = diff * vec3(0.5f, 0.5f, 0.5f);
 
     FragColor = vec4((ambient + diffuse), 1.0f);

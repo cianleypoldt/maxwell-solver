@@ -87,46 +87,6 @@ static void camera_build_view(struct camera *camera) {
     mat_mul(camera->view, M, camera->view, 4, 4, 4);
 }
 
-struct rotator {
-    float forward[4];
-    float forward_inv[4];
-    float up[4];
-    float up_inv[4];
-    float left[4];
-    float left_inv[4];
-};
-
-static void init_rotator(float q[4], struct rotator *r, float angle) {
-    float sin = sinf(angle / 2);
-    float cos = cosf(angle / 2);
-
-    memset(r, 0, sizeof(struct rotator));
-
-    r->forward[3] = 1.0f;
-    quat_sandwitch(r->forward, r->forward, q);
-    r->forward[0] = cos;
-    r->forward[1] *= sin;
-    r->forward[2] *= sin;
-    r->forward[3] *= sin;
-    quat_conj(r->forward_inv, r->forward);
-
-    r->left[1] = 1.0f;
-    quat_sandwitch(r->left, r->left, q);
-    r->left[0] = cos;
-    r->left[1] *= sin;
-    r->left[2] *= sin;
-    r->left[3] *= sin;
-    quat_conj(r->left_inv, r->left);
-
-    r->up[2] = 1.0f;
-    quat_sandwitch(r->up, r->up, q);
-    r->up[0] = cos;
-    r->up[1] *= sin;
-    r->up[2] *= sin;
-    r->up[3] *= sin;
-    quat_conj(r->up_inv, r->up);
-}
-
 struct vol_uniform_locations {
     GLint camera_pos, camera_forward, camera_right, camera_up, intensity_E_field, intensity_B_field;
 };
@@ -164,18 +124,33 @@ struct renderctx {
     struct window window;
     struct camera camera;
 
+    // Shared
+    GLuint scene_fbo, scene_color_tex, scene_depth_tex;
+
+    // Borders, probably temp
     struct render_obj volume_borders;
     struct border_uniform_locations border_uniforms;
 
+    // Sources, probably temp & to be included in general opaque abstraction
     struct render_obj sources;
     struct sources_uniform_locations sources_uniforms;
 
-    struct render_obj volume_pathtrace;
+    // Opaque geometry abstraction:
+    //   - requires a stronger shader and uniform abstraction
+    //   - Mesh + shader + init (defaults or custom) + render (d.o.c.) + destroy (default as well as custom)
 
+    // Volume, non temp, remains it's own pass
+    struct render_obj volume_pathtrace;
+    GLuint volume_fbo, volume_color_tex;
     GLuint vol_Etex, vol_Btex;
     float vol_step_size;
     struct vol_uniform_locations vol_uniforms;
     float *vol_magnitude_buffer;
+
+    // transparent geometry (WOIT), yet to be implemented
+    struct render_obj oit_geometry;
+    GLuint oit_fbo, oit_accum_tex, oit_reveal_tex;
+
 } renderer;
 
 #define RENDER_OBJ_COUNT 3
@@ -279,6 +254,36 @@ int init_renderer(simctx *ctx) {
     renderer.field = get_field(ctx);
 
     if (init_window(1400, 800, "floating") < 0) return -1;
+
+    glGenTextures(1, &renderer.scene_depth_tex);
+    glBindTexture(GL_TEXTURE_2D, renderer.scene_depth_tex);
+
+    glTexImage2D(
+        GL_TEXTURE_2D,
+        0,
+        GL_DEPTH_COMPONENT32F,
+        renderer.window.width,
+        renderer.window.height,
+        0,
+        GL_DEPTH_COMPONENT,
+        GL_FLOAT,
+        NULL
+    );
+
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+    //glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    //
+    //glFramebufferTexture2D(
+    //    GL_FRAMEBUFFER,
+    //    GL_DEPTH_ATTACHMENT,
+    //    GL_TEXTURE_2D,
+    //    depthTexture,
+    //    0
+    //);
 
     {  // Volume border
         struct render_obj *vb = &renderer.volume_borders;
@@ -519,7 +524,7 @@ void render_current() {
         glUseProgram(srcs->shader);
         glUniformMatrix4fv(u->proj, 1, GL_FALSE, renderer.camera.proj);
         glUniformMatrix4fv(u->view, 1, GL_FALSE, renderer.camera.view);
-        glUniform3f(u->light_angle, -0.2f, -0.2f, -1.0f);
+        glUniform3f(u->light_angle, -0.0f, 1.0f, -0.0f);
 
         float model[16];
         mat_identity(model, 4);
@@ -554,6 +559,52 @@ void process_input() {
     struct window *w = &renderer.window;
     struct camera *c = &renderer.camera;
 
+    // Arrow Key camera pivot
+
+    // q_up(_inv) rotates by +/- 2*h_angle around worldspace up (y) vector.
+    float h_angle = 0.02;
+    float sin = sinf(h_angle), cos = cosf(h_angle);
+    float q_up[4] = {cos, 0.0f, sin, 0.0f};
+    float q_up_inv[4];
+    quat_conj(q_up_inv, q_up);
+
+    // q_left(_inv) rotates by +/- 2*h_angle around the camera-space left (x) vector.
+    float q_left[4] = {0.0f, 1.0f, 0.0f, 0.0f};
+    quat_sandwitch(q_left, q_left, c->rot);
+    q_left[0] = cos;
+    q_left[1] *= sin;
+    q_left[2] *= sin;
+    q_left[3] *= sin;
+    float q_left_inv[4];
+    quat_conj(q_left_inv, q_left);
+
+    if (glfwGetKey(w->ptr, GLFW_KEY_LEFT) == GLFW_PRESS) {
+        quat_mul(c->rot, q_up, c->rot);
+    }
+    if (glfwGetKey(w->ptr, GLFW_KEY_RIGHT) == GLFW_PRESS) {
+        quat_mul(c->rot, q_up_inv, c->rot);
+    }
+
+    // lock rotation to straight vertical and horizontal
+
+    // camera-space forward, needed for angle lock and W/S movement later
+    float q_forward[4] = {0, 0, 0, -1};
+    quat_sandwitch(q_forward, q_forward, c->rot);
+    float *camera_forward = q_forward + 1;
+
+    float dot = vec_dot(camera_forward, (float[3]){0, 1.0, 0}, 3);
+    float dot_limit = vec_length(camera_forward, 3) - 0.1 * (M_PI / 180);  // length of camera_forward minus 0.1° marigin
+
+    if (dot < dot_limit && glfwGetKey(w->ptr, GLFW_KEY_UP) == GLFW_PRESS) {
+        quat_mul(c->rot, q_left, c->rot);
+    }
+
+    if (dot > -dot_limit && glfwGetKey(w->ptr, GLFW_KEY_DOWN) == GLFW_PRESS) {
+        quat_mul(c->rot, q_left_inv, c->rot);
+    }
+
+    // WASD/Space/Shift movement
+
     if (glfwGetKey(w->ptr, GLFW_KEY_SPACE) == GLFW_PRESS) {
         c->pos[1] += CAMERA_SPEED_VERTICAL;
     }
@@ -561,28 +612,6 @@ void process_input() {
         c->pos[1] -= CAMERA_SPEED_VERTICAL;
     }
 
-    struct rotator cr;
-    init_rotator(c->rot, &cr, 0.01);
-
-    if (glfwGetKey(w->ptr, GLFW_KEY_LEFT) == GLFW_PRESS) {
-        quat_mul(c->rot, cr.up, c->rot);
-    }
-    if (glfwGetKey(w->ptr, GLFW_KEY_RIGHT) == GLFW_PRESS) {
-        quat_mul(c->rot, cr.up_inv, c->rot);
-    }
-    if (glfwGetKey(w->ptr, GLFW_KEY_UP) == GLFW_PRESS) {
-        quat_mul(c->rot, cr.left, c->rot);
-    }
-    if (glfwGetKey(w->ptr, GLFW_KEY_DOWN) == GLFW_PRESS) {
-        quat_mul(c->rot, cr.left_inv, c->rot);
-    }
-
-    vec_print(c->rot, 4);
-
-    float q_camera_forward[4] = {0, 0, 0, -1};
-    quat_sandwitch(q_camera_forward, q_camera_forward, c->rot);
-
-    float *camera_forward = q_camera_forward + 1;
     camera_forward[1] = 0;  // horizontal component
     vec_normalize(camera_forward, camera_forward, 3);
     vec_scale(camera_forward, camera_forward, CAMERA_SPEED_HORIZONTAL, 3);
