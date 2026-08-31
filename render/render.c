@@ -96,30 +96,30 @@ struct rotator {
     float left_inv[4];
 };
 
-void init_rotator(float q[4], struct rotator *r, float angle) {
+static void init_rotator(float q[4], struct rotator *r, float angle) {
     float sin = sinf(angle / 2);
     float cos = cosf(angle / 2);
 
     memset(r, 0, sizeof(struct rotator));
 
-    r->forward[1] = 1.0f;
-    quat_sandwitch(r->forward, q, r->forward);
+    r->forward[3] = 1.0f;
+    quat_sandwitch(r->forward, r->forward, q);
     r->forward[0] = cos;
     r->forward[1] *= sin;
     r->forward[2] *= sin;
     r->forward[3] *= sin;
     quat_conj(r->forward_inv, r->forward);
 
-    r->left[2] = 1.0f;
-    quat_sandwitch(r->left, q, r->left);
+    r->left[1] = 1.0f;
+    quat_sandwitch(r->left, r->left, q);
     r->left[0] = cos;
     r->left[1] *= sin;
     r->left[2] *= sin;
     r->left[3] *= sin;
     quat_conj(r->left_inv, r->left);
 
-    r->up[3] = 1.0f;
-    quat_sandwitch(r->up, q, r->up);
+    r->up[2] = 1.0f;
+    quat_sandwitch(r->up, r->up, q);
     r->up[0] = cos;
     r->up[1] *= sin;
     r->up[2] *= sin;
@@ -191,12 +191,14 @@ static void init_camera() {
     memset(c, 0, sizeof(*c));
 
     c->fov_y = 45 * (M_PI / 180);
-    c->aspect = (float)renderer.window.width / renderer.window.height;
+    if (renderer.window.height > 0) {
+        c->aspect = (float)renderer.window.width / renderer.window.height;
+    }
     c->near_plane = 1.0f;
     c->far_plane = 100.0f;
 
-    c->rot[2] = 1.0f;
-    c->pos[2] = 5.0f;
+    c->rot[0] = 1.0f;
+    // c->pos[2] = -5.0f;
 
     camera_build_proj(c);
     camera_build_view(c);
@@ -208,8 +210,10 @@ static void window_resize_callback(GLFWwindow *window, int width, int height) {
     w->width = width;
     w->height = height;
 
-    renderer.camera.aspect = (float)width / height;
-    camera_build_proj(&renderer.camera);
+    if (height > 0) {
+        renderer.camera.aspect = (float)width / height;
+        camera_build_proj(&renderer.camera);
+    }
 }
 
 static void cursor_pos_callback(GLFWwindow *window, double x, double y) {
@@ -221,6 +225,8 @@ static void cursor_pos_callback(GLFWwindow *window, double x, double y) {
 }
 
 static int init_window(int width, int height, char *name) {
+    //TODO: don't leak on failure.
+
     struct window *w = &renderer.window;
 
     if (!glfwInit()) return -1;
@@ -239,7 +245,11 @@ static int init_window(int width, int height, char *name) {
     glfwSetCursorPosCallback(w->ptr, cursor_pos_callback);
 
     glfwMakeContextCurrent(w->ptr);
-    gladLoadGLLoader((GLADloadproc)glfwGetProcAddress);
+    if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) {
+        glfwDestroyWindow(w->ptr);
+        glfwTerminate();
+        return -1;
+    }
 
     glfwGetWindowSize(w->ptr, &w->width, &w->height);
     glViewport(0, 0, w->width, w->height);
@@ -338,8 +348,6 @@ int init_renderer(simctx *ctx) {
         glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void *)(3 * sizeof(float)));
         glEnableVertexAttribArray(1);
 
-        const float half_dim = 0.05;
-
         glBufferData(GL_ARRAY_BUFFER, sizeof(float) * 288, vertices, GL_STATIC_DRAW);
 
         srcs->element_count = 288 / 8;
@@ -361,6 +369,9 @@ int init_renderer(simctx *ctx) {
 
     {  // Volumetric Pathtracer
         // Screenspace quad for path tracing shader
+
+        renderer.vol_step_size = 0.1;
+
         struct render_obj *vp = &renderer.volume_pathtrace;
         glGenBuffers(1, &vp->vbo);
         glGenVertexArrays(1, &vp->vao);
@@ -524,12 +535,11 @@ void render_current() {
         }
     }
 
-    glfwSwapBuffers(renderer.window.ptr);
-
     // Volumme
     // bind shader, accumulation, depth, textures, update uniforms, vao
     // render volume over geometry
 
+    glfwSwapBuffers(renderer.window.ptr);
     return;
 }
 
@@ -552,19 +562,48 @@ void process_input() {
     }
 
     struct rotator cr;
-    init_rotator(c->rot, &cr, 1);
+    init_rotator(c->rot, &cr, 0.01);
 
     if (glfwGetKey(w->ptr, GLFW_KEY_LEFT) == GLFW_PRESS) {
-        quat_sandwitch(c->rot, c->rot, cr.left);
+        quat_mul(c->rot, cr.up, c->rot);
     }
     if (glfwGetKey(w->ptr, GLFW_KEY_RIGHT) == GLFW_PRESS) {
-        quat_sandwitch(c->rot, cr.up_inv, c->rot);
+        quat_mul(c->rot, cr.up_inv, c->rot);
     }
     if (glfwGetKey(w->ptr, GLFW_KEY_UP) == GLFW_PRESS) {
-        quat_sandwitch(c->rot, cr.left, c->rot);
+        quat_mul(c->rot, cr.left, c->rot);
     }
     if (glfwGetKey(w->ptr, GLFW_KEY_DOWN) == GLFW_PRESS) {
-        quat_sandwitch(c->rot, cr.left_inv, c->rot);
+        quat_mul(c->rot, cr.left_inv, c->rot);
+    }
+
+    vec_print(c->rot, 4);
+
+    float q_camera_forward[4] = {0, 0, 0, -1};
+    quat_sandwitch(q_camera_forward, q_camera_forward, c->rot);
+
+    float *camera_forward = q_camera_forward + 1;
+    camera_forward[1] = 0;  // horizontal component
+    vec_normalize(camera_forward, camera_forward, 3);
+    vec_scale(camera_forward, camera_forward, CAMERA_SPEED_HORIZONTAL, 3);
+
+    if (glfwGetKey(w->ptr, GLFW_KEY_W) == GLFW_PRESS) {
+        vec_add(c->pos, c->pos, camera_forward, 3);
+    }
+    if (glfwGetKey(w->ptr, GLFW_KEY_S) == GLFW_PRESS) {
+        vec_sub(c->pos, c->pos, camera_forward, 3);
+    }
+
+    float camera_left[3];
+    camera_left[0] = camera_forward[2];
+    camera_left[1] = 0;
+    camera_left[2] = -camera_forward[0];
+
+    if (glfwGetKey(w->ptr, GLFW_KEY_A) == GLFW_PRESS) {
+        vec_add(c->pos, c->pos, camera_left, 3);
+    }
+    if (glfwGetKey(w->ptr, GLFW_KEY_D) == GLFW_PRESS) {
+        vec_sub(c->pos, c->pos, camera_left, 3);
     }
 
     camera_build_view(c);

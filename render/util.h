@@ -126,10 +126,11 @@ void quat_mul(float *q, float *q1, float *q2) {
 }
 
 void quat_sandwitch(float *q_out, float *q1, float *q2) {
-    quat_mul(q_out, q2, q1);
+    float tmp_res[4];
+    quat_mul(tmp_res, q2, q1);
     float tmp[4];
     quat_conj(tmp, q2);
-    quat_mul(q_out, q_out, tmp);
+    quat_mul(q_out, tmp_res, tmp);
 }
 
 void mat4_from_quat(float *M, float *q) {

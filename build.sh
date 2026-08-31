@@ -1,8 +1,10 @@
 set -e
 
 mapfile -t files < <(find src -type f -name '*.c')
+
 mapfile -t render_files < <(find render -type f -name '*.c')
 render_files+=("third_party/glad.c")
+
 mapfile -t hdf5_files < <(find hdf5 -type f -name '*.c')
 
 
@@ -49,6 +51,7 @@ if [ "$1" = "--bear" ]; then
 	 "${files[@]}" \
          "${render_files[@]}" \
 	 "${hdf5_files[@]}"
+      echo "compiled db build"
 elif [ "$1" = "-d" ]; then
     gcc \
       -o "${name}_db.o" \
@@ -58,7 +61,8 @@ elif [ "$1" = "-d" ]; then
       "${files[@]}" \
       "${render_files[@]}" \
       "${hdf5_files[@]}"
-else 
+      echo "compiled db build"
+else
     gcc \
       -o "${name}.o" \
       "${compiler_flags_release[@]}" \
@@ -67,8 +71,8 @@ else
       "${files[@]}" \
       "${render_files[@]}" \
       "${hdf5_files[@]}"
+    echo "compiled release build"
+    ./"${name}.o"
 fi
-
-if [ -f "$name" ]; then ./"$name"; fi
 
 
