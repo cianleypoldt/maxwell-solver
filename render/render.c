@@ -74,9 +74,9 @@ static void camera_build_view(struct camera *camera) {
     mat_identity(camera->view, 4);
 
     // translation
-    camera->view[0 + 3 * 4] = -camera->pos[0];
-    camera->view[1 + 3 * 4] = -camera->pos[1];
-    camera->view[2 + 3 * 4] = -camera->pos[2];
+    camera->view[MAT_IDX(0, 3, 4, 4)] = -camera->pos[0];
+    camera->view[MAT_IDX(1, 3, 4, 4)] = -camera->pos[1];
+    camera->view[MAT_IDX(2, 3, 4, 4)] = -camera->pos[2];
 
     float conj_rot[4];
     quat_conj(conj_rot, camera->rot);
@@ -86,14 +86,6 @@ static void camera_build_view(struct camera *camera) {
 
     mat_mul(camera->view, M, camera->view, 4, 4, 4);
 }
-
-struct frame_data {
-    float proj[16];
-    float view[16];
-    float view_proj[16];
-    float camera_pos[3];
-    float time;
-};
 
 struct mesh {
     GLuint vbo, ebo, vao;
@@ -143,6 +135,14 @@ inline static void mesh_draw(const struct mesh m, GLenum mode) {
     glDrawElements(mode, m.index_count, GL_UNSIGNED_INT, NULL);
 }
 
+struct frame_data {
+    float proj[16];
+    float view[16];
+    float view_proj[16];
+    float camera_pos[3];
+    float time;
+};
+
 #define N_SOURCES 10
 const float source_positions[N_SOURCES][3] = {
     {12.0f, 12.0f, 12.0f},
@@ -166,26 +166,34 @@ struct renderctx {
     GLuint frame_data_ubo;
     struct frame_data frame_data;
 
-    // Shared
-    GLuint scene_fbo, scene_color_tex, scene_depth_tex;
+    // Opaque FBO
+    GLuint color_tex, depth;
+    GLuint opaque_fbo;
+
+    // transparency FBO resources
+    GLuint accumTex, revealTex;
+    GLuint oit_fbo;
 
     // Borders, probably temp
     struct mesh fullscreen_quad;
     struct mesh unit_cube;
     struct mesh unit_cube_wireframe;
+
     GLuint shader_sources;
-    GLint uloc_wf_model;
+    GLint uloc_srcs_model, uloc_srcs_light_angle;
+
+    GLuint shader_sources2;
+    GLint uloc_srcs_model2, uloc_srcs_col2;
 
     // Sources, probably temp & to be included in general opaque abstraction
     GLuint shader_wireframe;
-    GLint uloc_srcs_model, uloc_srcs_light_angle;
+    GLint uloc_wf_model;
 
-    // Opaque geometry abstraction:
-    //   - requires a stronger shader and uniform abstraction
-    //   - Mesh + shader + init (defaults or custom) + render (d.o.c.) + destroy (default as well as custom)
+    // Game plan:
+    //  1. render opaque into opaque FBO
+    //  2. render volume, as if it were regular WOIT geometry, sample opaque depth explicitly as a texture
+    //  3. render WOIT geometry, bind opaque depth for culling implicitly
 
-    // transparent geometry (WOIT), yet to be implemented
-    // struct render_obj oit_geometry;
 } renderer;
 
 static void init_camera() {
@@ -267,11 +275,6 @@ static void destroy_window() {
     glfwTerminate();
 }
 
-GLuint create_program(const char *vs_path, const char *fs_path);
-
-#define VERTEX_VALUE_COUNT  3
-#define BORDER_VERTEX_COUNT 8
-
 // clang-format off
 static float QUAD_VERTS[4*3] = {
     -1.0f, -1.0f, 0,
@@ -279,11 +282,9 @@ static float QUAD_VERTS[4*3] = {
     -1.0f,  1.0f, 0,
      1.0f,  1.0f, 0
 };
-
 static uint32_t QUAD_INDICES[6] = {
     0, 2, 3, 0, 3, 1
 };
-
 static float CUBE_VERTS[8 * 3] = {
 	-0.5f, -0.5f, -0.5f, // 0: (-,-,-)
 	0.5f,  -0.5f, -0.5f, // 1: (+,-,-)
@@ -312,6 +313,8 @@ static uint32_t WIREFRAME_CUBE_INDICES[36] = {
 
 #define ARRAY_COUNT(arr) (sizeof(arr) / sizeof((arr)[0]))
 
+static GLuint create_program(const char *vs_path, const char *fs_path);
+
 int init_renderer(simctx *ctx) {
     memset(&renderer, 0, sizeof(struct renderctx));
 
@@ -333,6 +336,47 @@ int init_renderer(simctx *ctx) {
     glBindBufferBase(GL_UNIFORM_BUFFER, 0, renderer.frame_data_ubo);  // Bind frame_data_ubo to binding point 0
     glBindBuffer(GL_UNIFORM_BUFFER, 0);
 
+    glGenFramebuffers(1, &renderer.oit_fbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, renderer.oit_fbo);
+    // Transparency FBO resources
+    {
+        GLenum internal_format[3] = {GL_RGBA16F, GL_R16F, GL_DEPTH_COMPONENT24};
+        GLenum format[3] = {GL_RGBA, GL_RED, GL_DEPTH_COMPONENT};
+        GLenum attachements[3] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_DEPTH_ATTACHMENT};
+        GLuint *textures[3] = {&renderer.accumTex, &renderer.revealTex, &renderer.depth};
+
+        for (int i = 0; i < 3; i++) {
+            glGenTextures(1, textures[i]);
+            glBindTexture(GL_TEXTURE_2D, *textures[i]);
+            glTexImage2D(GL_TEXTURE_2D, 0, internal_format[i], renderer.window.width, renderer.window.height, 0, format[i], GL_FLOAT, NULL);
+
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+            glFramebufferTexture2D(
+                GL_FRAMEBUFFER,
+                attachements[i],
+                GL_TEXTURE_2D,
+                *textures[i],
+                0
+            );
+        }
+
+        GLenum drawBuffers[] = {
+            GL_COLOR_ATTACHMENT0,
+            GL_COLOR_ATTACHMENT1
+        };
+        glDrawBuffers(2, drawBuffers);
+
+        if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+            printf("fail");
+        }
+
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    }
+
     // Meshes
     mesh_create(&renderer.fullscreen_quad, QUAD_VERTS, ARRAY_COUNT(QUAD_VERTS), QUAD_INDICES, ARRAY_COUNT(QUAD_INDICES), POS, 3);
     mesh_create(&renderer.unit_cube, CUBE_VERTS, ARRAY_COUNT(CUBE_VERTS), CUBE_INDICES, ARRAY_COUNT(CUBE_INDICES), POS, 3);
@@ -341,6 +385,7 @@ int init_renderer(simctx *ctx) {
     // Shaders
     renderer.shader_wireframe = create_program("render/shaders/orange_vs.glsl", "render/shaders/orange_fs.glsl");
     renderer.shader_sources = create_program("render/shaders/source_vs.glsl", "render/shaders/source_fs.glsl");
+    renderer.shader_sources2 = create_program("render/shaders/source2_vs.glsl", "render/shaders/source2_fs.glsl");
 
     {  // wireframe uniform locatios
         float model[16] = {0};
@@ -348,7 +393,6 @@ int init_renderer(simctx *ctx) {
         model[MAT_IDX(1, 1, 4, 4)] = get_em_field_height(renderer.field);
         model[MAT_IDX(2, 2, 4, 4)] = get_em_field_depth(renderer.field);
         model[MAT_IDX(3, 3, 4, 4)] = 1;
-        mat_print(model, 4, 4);
 
         GLuint pwireframe = renderer.shader_wireframe;
         glUseProgram(pwireframe);
@@ -360,6 +404,13 @@ int init_renderer(simctx *ctx) {
     glUseProgram(psources);
     renderer.uloc_srcs_model = glGetUniformLocation(psources, "model");
     renderer.uloc_srcs_light_angle = glGetUniformLocation(psources, "light_angle");
+    glUseProgram(0);
+
+    // sources uniform locations
+    GLuint psources2 = renderer.shader_sources2;
+    glUseProgram(psources2);
+    renderer.uloc_srcs_model2 = glGetUniformLocation(psources2, "model");
+    renderer.uloc_srcs_col2 = glGetUniformLocation(psources2, "col");
     glUseProgram(0);
 
     glEnable(GL_DEPTH_TEST);
@@ -405,34 +456,48 @@ void render_current() {
     // draw geometry, collect depth and accumulation
 
     {  // Draw Volume Borders
-
         glUseProgram(renderer.shader_wireframe);
         mesh_draw(renderer.unit_cube_wireframe, GL_LINES);
     }
 
-    {  // Sources
-        float axis[3] = {4, 4, -1};
-        vec_normalize(axis, axis, 3);
-        float angle = 0.3 * M_PI;
-        float s = sin(angle);
-        float rotation_axis[4] = {cos(angle), axis[0] * s, axis[1] * s, axis[2] * s};
+    float axis[3] = {4, 4, -1};
+    vec_normalize(axis, axis, 3);
+    float angle = 0.3 * M_PI;
+    float s = sin(angle);
+    float rotation_axis[4] = {cos(angle), axis[0] * s, axis[1] * s, axis[2] * s};
+    float container_rotator[16];
+    mat4_from_quat(container_rotator, rotation_axis);
 
-        float container_rotator[16];
-        mat4_from_quat(container_rotator, rotation_axis);
-
+    {  // Sources opaque
         glUseProgram(renderer.shader_sources);
-        glUniform3f(renderer.uloc_srcs_light_angle, -0.0f, 1.0f, -0.0f);
-
+        glUniform3f(renderer.uloc_srcs_light_angle, -0.3f, 1.0f, 0.1f);
         float model[16];
         mat_identity(model, 4);
 
-        for (int i = 0; i < N_SOURCES; i++) {
+        for (int i = 0; i < N_SOURCES / 2; i++) {
             mat_mul(model, container_rotator, model, 4, 4, 4);
             model[0 + 3 * 4] = source_positions[i][0];
             model[1 + 3 * 4] = source_positions[i][1];
             model[2 + 3 * 4] = source_positions[i][2];
 
             glUniformMatrix4fv(renderer.uloc_srcs_model, 1, GL_FALSE, model);
+            mesh_draw(renderer.unit_cube, GL_TRIANGLES);
+        }
+    }
+
+    {  // Sources opaque
+        glUseProgram(renderer.shader_sources2);
+        glUniform3f(renderer.uloc_srcs_col2, 0.3f, 0.6f, 0.1f);
+        float model[16];
+        mat_identity(model, 4);
+
+        for (int i = N_SOURCES / 2; i < N_SOURCES; i++) {
+            mat_mul(model, container_rotator, model, 4, 4, 4);
+            model[0 + 3 * 4] = source_positions[i][0];
+            model[1 + 3 * 4] = source_positions[i][1];
+            model[2 + 3 * 4] = source_positions[i][2];
+
+            glUniformMatrix4fv(renderer.uloc_srcs_model2, 1, GL_FALSE, model);
             mesh_draw(renderer.unit_cube, GL_TRIANGLES);
         }
     }
@@ -581,7 +646,7 @@ static int link_shader_with_logs(GLuint prog, GLuint vs, GLuint fs) {
     return 0;
 }
 
-GLuint create_program(const char *vs_path, const char *fs_path) {
+static GLuint create_program(const char *vs_path, const char *fs_path) {
     GLuint vertex_shader = glCreateShader(GL_VERTEX_SHADER);
     GLuint fragment_shader = glCreateShader(GL_FRAGMENT_SHADER);
 
