@@ -20,6 +20,8 @@ compiler_flags_release=(
     "-funroll-loops"
     "-fopenmp"
     "-DNDEBUG"
+    "-Wall"
+    "-Wextra"
 )
 
 compiler_flags_debug=(

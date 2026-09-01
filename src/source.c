@@ -4,8 +4,6 @@
 
 #include <math.h>
 
-static void vec3_rotate_euler(float res[3], const float v[3], float roll, float pitch, float yaw);
-
 int init_source_list(source_list *src_list) {
     src_list->n_sources = 0;
     return 1;

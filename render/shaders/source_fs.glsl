@@ -1,21 +1,17 @@
-#version 330 core
+#version 450 core
 
-in vec3 normal;
-
+in vec3 frag_pos;
 out vec4 FragColor;
 
 uniform vec3 light_angle;
 
+vec3 diffuse = vec3(0.5f, 0.5f, 0.5f);
+vec3 ambient = vec3(0.3f, 0.1f, 0.2f);
+
 void main()
 {
-    vec3 light_dir = normalize(light_angle);
+    vec3 normal = normalize(cross(dFdx(frag_pos), dFdy(frag_pos)));
+    float diff = max(dot(normal, normalize(light_angle)), 0.0);
 
-    float diff = max(dot(normal, light_dir), 0.0);
-
-    vec3 reflect_dir = reflect(-light_dir, normal);
-
-    vec3 ambient = vec3(0.3f, 0.1f, 0.2f);
-    vec3 diffuse = diff * vec3(0.5f, 0.5f, 0.5f);
-
-    FragColor = vec4((ambient + diffuse), 1.0f);
+    FragColor = vec4((ambient + diff * diffuse), 1.0f);
 }

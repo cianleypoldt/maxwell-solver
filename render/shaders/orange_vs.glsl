@@ -13,10 +13,7 @@ layout(std140, binding = 0) uniform frame_data
 
 uniform mat4 model;
 
-out vec3 frag_pos;
-
 void main()
 {
     gl_Position = view_proj * model * vec4(attrib_position, 1.0f);
-    frag_pos = vec4(model * vec4(attrib_position, 1.0)).xyz;
 }
