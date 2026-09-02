@@ -4,6 +4,7 @@
 #include "glad/glad.h"
 #include "simulation.h"
 #include <GLFW/glfw3.h>
+#include <H5Lpublic.h>
 #include <complex.h>
 #include <math.h>
 #include <stdint.h>
@@ -97,13 +98,13 @@ enum mesh_layout {
     POS_NORM,
 };
 
-static void mesh_create(struct mesh *m, float *vertices, int vcount, uint32_t *indices, int icount, enum mesh_layout layout, int vertex_value_count) {
+static void mesh_create(struct mesh *m, float *vertices, int vsize, uint32_t *indices, int isize, enum mesh_layout layout, int vertex_value_count) {
     glGenBuffers(1, &m->vbo);
     glGenBuffers(1, &m->ebo);
     glBindBuffer(GL_ARRAY_BUFFER, m->vbo);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(float) * vcount * vertex_value_count, vertices, GL_STATIC_DRAW);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(float) * vsize * vertex_value_count, vertices, GL_STATIC_DRAW);
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m->ebo);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(uint32_t) * icount, indices, GL_STATIC_DRAW);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(uint32_t) * isize, indices, GL_STATIC_DRAW);
 
     glGenVertexArrays(1, &m->vao);
     glBindVertexArray(m->vao);
@@ -120,7 +121,7 @@ static void mesh_create(struct mesh *m, float *vertices, int vcount, uint32_t *i
     glBindVertexArray(0);
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
 
-    m->index_count = icount;
+    m->index_count = isize;
 }
 
 static void mesh_destroy(struct mesh *m) {
@@ -133,6 +134,19 @@ static void mesh_destroy(struct mesh *m) {
 inline static void mesh_draw(const struct mesh m, GLenum mode) {
     glBindVertexArray(m.vao);
     glDrawElements(mode, m.index_count, GL_UNSIGNED_INT, NULL);
+}
+
+static void texture_create(GLuint *texture, GLenum int_format, GLenum format, GLenum type, int width, int height, GLenum filter, GLenum clamp, void *ptr) {
+    glGenTextures(1, texture);
+    glBindTexture(GL_TEXTURE_2D, *texture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, clamp);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, clamp);
+
+    glTexImage2D(GL_TEXTURE_2D, 0, int_format, width, height, 0, format, type, ptr);
+
+    glBindTexture(GL_TEXTURE_2D, 0);
 }
 
 struct frame_data {
@@ -167,11 +181,11 @@ struct renderctx {
     struct frame_data frame_data;
 
     // Opaque FBO
-    GLuint color_tex, depth;
+    GLuint opaque_color_tex, depth;
     GLuint opaque_fbo;
 
     // transparency FBO resources
-    GLuint accumTex, revealTex;
+    GLuint oit_accum_tex, oit_reveal_tex;
     GLuint oit_fbo;
 
     // Borders, probably temp
@@ -179,11 +193,14 @@ struct renderctx {
     struct mesh unit_cube;
     struct mesh unit_cube_wireframe;
 
-    GLuint shader_sources;
+    GLuint shader_opaque;
     GLint uloc_srcs_model, uloc_srcs_light_angle;
 
-    GLuint shader_sources2;
-    GLint uloc_srcs_model2, uloc_srcs_col2;
+    GLuint shader_transparent;
+    GLint uloc_srcs_model_transparent, uloc_srcs_col_transparent;
+
+    GLuint shader_composite;
+    GLint uloc_opaque_color_tex, uloc_oit_accum_tex, uloc_oit_reveal_tex;
 
     // Sources, probably temp & to be included in general opaque abstraction
     GLuint shader_wireframe;
@@ -263,7 +280,6 @@ static int init_window(int width, int height, char *name) {
 
     glfwGetWindowSize(w->ptr, &w->width, &w->height);
     glViewport(0, 0, w->width, w->height);
-    glClearColor(0.2f, 0.3f, 0.3f, 1.0f);
 
     glfwSetInputMode(w->ptr, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
 
@@ -324,55 +340,52 @@ int init_renderer(simctx *ctx) {
     if (init_window(1400, 800, "floating") < 0) return -1;
     init_camera();
 
-    // Perframe data UBO
-    glGenBuffers(1, &renderer.frame_data_ubo);
-    glBindBuffer(GL_UNIFORM_BUFFER, renderer.frame_data_ubo);
-    glBufferData(
-        GL_UNIFORM_BUFFER,
-        sizeof(struct frame_data),
-        NULL,
-        GL_DYNAMIC_DRAW
-    );
-    glBindBufferBase(GL_UNIFORM_BUFFER, 0, renderer.frame_data_ubo);  // Bind frame_data_ubo to binding point 0
-    glBindBuffer(GL_UNIFORM_BUFFER, 0);
+    {  // Perframe data UBO
+        glGenBuffers(1, &renderer.frame_data_ubo);
+        glBindBuffer(GL_UNIFORM_BUFFER, renderer.frame_data_ubo);
+        glBufferData(
+            GL_UNIFORM_BUFFER,
+            sizeof(struct frame_data),
+            NULL,
+            GL_DYNAMIC_DRAW
+        );
+        glBindBufferBase(GL_UNIFORM_BUFFER, 0, renderer.frame_data_ubo);  // Bind frame_data_ubo to binding point 0
+        glBindBuffer(GL_UNIFORM_BUFFER, 0);
+    }
 
-    glGenFramebuffers(1, &renderer.oit_fbo);
-    glBindFramebuffer(GL_FRAMEBUFFER, renderer.oit_fbo);
-    // Transparency FBO resources
-    {
-        GLenum internal_format[3] = {GL_RGBA16F, GL_R16F, GL_DEPTH_COMPONENT24};
-        GLenum format[3] = {GL_RGBA, GL_RED, GL_DEPTH_COMPONENT};
-        GLenum attachements[3] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_DEPTH_ATTACHMENT};
-        GLuint *textures[3] = {&renderer.accumTex, &renderer.revealTex, &renderer.depth};
+    {  // Renderpass / framebuffer resources
+        // Opaque Pass resources
+        texture_create(&renderer.opaque_color_tex, GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, renderer.window.width, renderer.window.height, GL_NEAREST, GL_CLAMP_TO_EDGE, NULL);
+        texture_create(&renderer.depth, GL_DEPTH_COMPONENT24, GL_DEPTH_COMPONENT, GL_FLOAT, renderer.window.width, renderer.window.height, GL_NEAREST, GL_CLAMP_TO_EDGE, NULL);
 
-        for (int i = 0; i < 3; i++) {
-            glGenTextures(1, textures[i]);
-            glBindTexture(GL_TEXTURE_2D, *textures[i]);
-            glTexImage2D(GL_TEXTURE_2D, 0, internal_format[i], renderer.window.width, renderer.window.height, 0, format[i], GL_FLOAT, NULL);
+        glGenFramebuffers(1, &renderer.opaque_fbo);
+        glBindFramebuffer(GL_FRAMEBUFFER, renderer.opaque_fbo);
 
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, renderer.opaque_color_tex, 0);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, renderer.depth, 0);
 
-            glFramebufferTexture2D(
-                GL_FRAMEBUFFER,
-                attachements[i],
-                GL_TEXTURE_2D,
-                *textures[i],
-                0
-            );
-        }
+        glDrawBuffers(1, (GLenum[1]){GL_COLOR_ATTACHMENT0});
 
-        GLenum drawBuffers[] = {
-            GL_COLOR_ATTACHMENT0,
-            GL_COLOR_ATTACHMENT1
-        };
-        glDrawBuffers(2, drawBuffers);
+        if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+            printf("opaque fb fail\n");
 
-        if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
-            printf("fail");
-        }
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+        // Transparency Pass resources
+        texture_create(&renderer.oit_accum_tex, GL_RGBA16F, GL_RGBA, GL_HALF_FLOAT, renderer.window.width, renderer.window.height, GL_NEAREST, GL_CLAMP_TO_EDGE, NULL);
+        texture_create(&renderer.oit_reveal_tex, GL_R16F, GL_RED, GL_HALF_FLOAT, renderer.window.width, renderer.window.height, GL_NEAREST, GL_CLAMP_TO_EDGE, NULL);
+
+        glGenFramebuffers(1, &renderer.oit_fbo);
+        glBindFramebuffer(GL_FRAMEBUFFER, renderer.oit_fbo);
+
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, renderer.oit_accum_tex, 0);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, renderer.oit_reveal_tex, 0);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, renderer.depth, 0);
+
+        glDrawBuffers(2, (GLenum[2]){GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1});
+
+        if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+            printf("woit fb fail\n");
 
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
     }
@@ -384,8 +397,9 @@ int init_renderer(simctx *ctx) {
 
     // Shaders
     renderer.shader_wireframe = create_program("render/shaders/orange_vs.glsl", "render/shaders/orange_fs.glsl");
-    renderer.shader_sources = create_program("render/shaders/source_vs.glsl", "render/shaders/source_fs.glsl");
-    renderer.shader_sources2 = create_program("render/shaders/source2_vs.glsl", "render/shaders/source2_fs.glsl");
+    renderer.shader_opaque = create_program("render/shaders/source_vs.glsl", "render/shaders/source_fs.glsl");
+    renderer.shader_transparent = create_program("render/shaders/wboit_vs.glsl", "render/shaders/wboit_fs.glsl");
+    renderer.shader_composite = create_program("render/shaders/flat_vs.glsl", "render/shaders/composite_fs.glsl");
 
     {  // wireframe uniform locatios
         float model[16] = {0};
@@ -399,21 +413,28 @@ int init_renderer(simctx *ctx) {
         glUniformMatrix4fv(glGetUniformLocation(pwireframe, "model"), 1, GL_FALSE, model);
     }
 
-    // sources uniform locations
-    GLuint psources = renderer.shader_sources;
+    // opaque sources uniform locations
+    GLuint psources = renderer.shader_opaque;
     glUseProgram(psources);
     renderer.uloc_srcs_model = glGetUniformLocation(psources, "model");
     renderer.uloc_srcs_light_angle = glGetUniformLocation(psources, "light_angle");
     glUseProgram(0);
 
-    // sources uniform locations
-    GLuint psources2 = renderer.shader_sources2;
+    // transparent sources uniform locations
+    GLuint psources2 = renderer.shader_transparent;
     glUseProgram(psources2);
-    renderer.uloc_srcs_model2 = glGetUniformLocation(psources2, "model");
-    renderer.uloc_srcs_col2 = glGetUniformLocation(psources2, "col");
+    renderer.uloc_srcs_model_transparent = glGetUniformLocation(psources2, "model");
+    renderer.uloc_srcs_col_transparent = glGetUniformLocation(psources2, "col");
     glUseProgram(0);
 
-    glEnable(GL_DEPTH_TEST);
+    // composite uniforms
+    GLuint pcomp = renderer.shader_composite;
+    glUseProgram(pcomp);
+    renderer.uloc_oit_accum_tex = glGetUniformLocation(pcomp, "oit_accum");
+    renderer.uloc_oit_reveal_tex = glGetUniformLocation(pcomp, "oit_reveal");
+    renderer.uloc_opaque_color_tex = glGetUniformLocation(pcomp, "opaque_color");
+    glUseProgram(0);
+
     printf("GL init error: %x\n", glGetError());
     return 0;
 }
@@ -423,11 +444,94 @@ void deinit_renderer() {
     mesh_destroy(&renderer.unit_cube);
     mesh_destroy(&renderer.unit_cube_wireframe);
 
-    glDeleteProgram(renderer.shader_sources);
+    glDeleteProgram(renderer.shader_opaque);
     glDeleteProgram(renderer.shader_wireframe);
 
     printf("GL Error: %x\n", glGetError());
     destroy_window();
+}
+
+static void opaque_pass() {
+    // OPAQUE PASS
+    // writes depth and color, reads none
+    glBindFramebuffer(GL_FRAMEBUFFER, renderer.opaque_fbo);
+    glClearColor(0.3f, 0.2f, 0.1f, 0.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    glEnable(GL_DEPTH_TEST);
+
+    // Volume Borders
+    glUseProgram(renderer.shader_wireframe);
+    mesh_draw(renderer.unit_cube_wireframe, GL_LINES);
+
+    // Sources opaque
+    float axis[3] = {4, 4, -1};
+    vec_normalize(axis, axis, 3);
+    float angle = 0.3 * M_PI;
+    float s = sin(angle);
+    float rotation_axis[4] = {cos(angle), axis[0] * s, axis[1] * s, axis[2] * s};
+    float container_rotator[16];
+    mat4_from_quat(container_rotator, rotation_axis);
+
+    glUseProgram(renderer.shader_opaque);
+    glUniform3f(renderer.uloc_srcs_light_angle, -0.3f, 1.0f, 0.1f);
+    float model[16];
+    mat_identity(model, 4);
+
+    for (int i = 0; i < N_SOURCES / 2; i++) {
+        mat_mul(model, container_rotator, model, 4, 4, 4);
+        model[0 + 3 * 4] = source_positions[i][0];
+        model[1 + 3 * 4] = source_positions[i][1];
+        model[2 + 3 * 4] = source_positions[i][2];
+
+        glUniformMatrix4fv(renderer.uloc_srcs_model, 1, GL_FALSE, model);
+        mesh_draw(renderer.unit_cube, GL_TRIANGLES);
+    }
+}
+
+static void transparent_pass() {
+    // TRANSPARENT PASS
+    glBindFramebuffer(GL_FRAMEBUFFER, renderer.oit_fbo);
+    const GLfloat clear_accum[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    const GLfloat clear_reveal[4] = {1.0f, 0.0f, 0.0f, 0.0f};
+    glClearBufferfv(GL_COLOR, 0, clear_accum);
+    glClearBufferfv(GL_COLOR, 1, clear_reveal);
+
+    // Read opaque passes depth, do not write.
+    glDepthMask(GL_FALSE);
+    glDepthFunc(GL_LESS);
+
+    glEnable(GL_BLEND);
+    glBlendFunci(0, GL_ONE, GL_ONE);
+    glBlendFunci(1, GL_ZERO, GL_ONE_MINUS_SRC_ALPHA);
+
+    float axis[3] = {4, 4, -1};
+    vec_normalize(axis, axis, 3);
+    float angle = 0.3 * M_PI;
+    float s = sin(angle);
+    float rotation_axis[4] = {cos(angle), axis[0] * s, axis[1] * s, axis[2] * s};
+    float container_rotator[16];
+    mat4_from_quat(container_rotator, rotation_axis);
+
+    {  // Sources transparent
+        glUseProgram(renderer.shader_transparent);
+        glUniform3f(renderer.uloc_srcs_col_transparent, 0.3f, 0.6f, 0.1f);
+        float model[16];
+        mat_identity(model, 4);
+
+        for (int i = N_SOURCES / 2; i < N_SOURCES; i++) {
+            mat_mul(model, container_rotator, model, 4, 4, 4);
+            model[0 + 3 * 4] = source_positions[i][0];
+            model[1 + 3 * 4] = source_positions[i][1];
+            model[2 + 3 * 4] = source_positions[i][2];
+
+            glUniformMatrix4fv(renderer.uloc_srcs_model_transparent, 1, GL_FALSE, model);
+            mesh_draw(renderer.unit_cube, GL_TRIANGLES);
+        }
+    }
+    glDisable(GL_DEPTH_TEST);
+    glDepthMask(GL_TRUE);
+    glDisable(GL_BLEND);
 }
 
 void render_current() {
@@ -448,59 +552,25 @@ void render_current() {
         );
     }
 
-    glClearColor(0.2f, 0.3f, 0.3f, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    opaque_pass();
+    transparent_pass();
 
-    // Geometry
-    // bind shader, accumulation, update uniforms, vao
-    // draw geometry, collect depth and accumulation
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glUseProgram(renderer.shader_composite);
 
-    {  // Draw Volume Borders
-        glUseProgram(renderer.shader_wireframe);
-        mesh_draw(renderer.unit_cube_wireframe, GL_LINES);
-    }
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, renderer.opaque_color_tex);
+    glUniform1i(renderer.uloc_opaque_color_tex, 0);
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, renderer.oit_accum_tex);
+    glUniform1i(renderer.uloc_oit_accum_tex, 1);
+    glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D, renderer.oit_reveal_tex);
+    glUniform1i(renderer.uloc_oit_reveal_tex, 2);
 
-    float axis[3] = {4, 4, -1};
-    vec_normalize(axis, axis, 3);
-    float angle = 0.3 * M_PI;
-    float s = sin(angle);
-    float rotation_axis[4] = {cos(angle), axis[0] * s, axis[1] * s, axis[2] * s};
-    float container_rotator[16];
-    mat4_from_quat(container_rotator, rotation_axis);
-
-    {  // Sources opaque
-        glUseProgram(renderer.shader_sources);
-        glUniform3f(renderer.uloc_srcs_light_angle, -0.3f, 1.0f, 0.1f);
-        float model[16];
-        mat_identity(model, 4);
-
-        for (int i = 0; i < N_SOURCES / 2; i++) {
-            mat_mul(model, container_rotator, model, 4, 4, 4);
-            model[0 + 3 * 4] = source_positions[i][0];
-            model[1 + 3 * 4] = source_positions[i][1];
-            model[2 + 3 * 4] = source_positions[i][2];
-
-            glUniformMatrix4fv(renderer.uloc_srcs_model, 1, GL_FALSE, model);
-            mesh_draw(renderer.unit_cube, GL_TRIANGLES);
-        }
-    }
-
-    {  // Sources opaque
-        glUseProgram(renderer.shader_sources2);
-        glUniform3f(renderer.uloc_srcs_col2, 0.3f, 0.6f, 0.1f);
-        float model[16];
-        mat_identity(model, 4);
-
-        for (int i = N_SOURCES / 2; i < N_SOURCES; i++) {
-            mat_mul(model, container_rotator, model, 4, 4, 4);
-            model[0 + 3 * 4] = source_positions[i][0];
-            model[1 + 3 * 4] = source_positions[i][1];
-            model[2 + 3 * 4] = source_positions[i][2];
-
-            glUniformMatrix4fv(renderer.uloc_srcs_model2, 1, GL_FALSE, model);
-            mesh_draw(renderer.unit_cube, GL_TRIANGLES);
-        }
-    }
+    mesh_draw(renderer.fullscreen_quad, GL_TRIANGLES);
 
     // Volumme
     // bind shader, accumulation, depth, textures, update uniforms, vao
