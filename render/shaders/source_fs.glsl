@@ -2,17 +2,29 @@
 
 in vec3 frag_pos;
 
-layout(location = 0) out vec4 color;
+layout(location = 0) out vec4 frag_col;
 
-uniform vec3 light_angle;
+layout(std140, binding = 0) uniform frame_data
+{
+    mat4 view;
+    mat4 proj;
+    mat4 view_proj;
+    vec4 camera_pos_v4;
+    vec4 light_angle_v4;
+    vec4 direct_light_color_v4;
+    vec4 ambient_light_color_v4;
+    float time;
+};
 
-vec3 diffuse = vec3(0.5f, 0.5f, 0.5f);
-vec3 ambient = vec3(0.3f, 0.1f, 0.2f);
+uniform vec3 color;
 
 void main()
 {
     vec3 normal = normalize(cross(dFdx(frag_pos), dFdy(frag_pos)));
-    float diff = max(dot(normal, normalize(light_angle)), 0.0);
+    float diff = max(dot(normal, normalize(light_angle_v4.xyz)), 0.0);
 
-    color = vec4((ambient + diff * diffuse), 1.0f);
+    vec3 ambient = color * ambient_light_color_v4.xyz;
+    vec3 diffuse = color * diff * direct_light_color_v4.xyz;
+
+    frag_col = vec4(ambient + diffuse, 1.0f);
 }

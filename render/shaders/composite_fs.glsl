@@ -10,5 +10,5 @@ in vec2 uv;
 
 void main()
 {
-    frag_color = vec4(texture(opaque_color, uv).rgba + texture(oit_accum, uv).rgba);
+    frag_color = vec4(texture(opaque_color, uv).rgba + texture(oit_accum, uv).rgba * texture(oit_reveal, uv).r);
 }

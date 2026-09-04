@@ -149,12 +149,17 @@ static void texture_create(GLuint *texture, GLenum int_format, GLenum format, GL
     glBindTexture(GL_TEXTURE_2D, 0);
 }
 
+// layout(std140), vec3 handled as vec4 to avoid padding.
 struct frame_data {
     float proj[16];
     float view[16];
     float view_proj[16];
-    float camera_pos[3];
+    float camera_pos[4];
+    float light_angle[4];
+    float direct_light_color[4];
+    float ambient_light_color[4];
     float time;
+    float _pad[3];
 };
 
 #define N_SOURCES 10
@@ -194,10 +199,10 @@ struct renderctx {
     struct mesh unit_cube_wireframe;
 
     GLuint shader_opaque;
-    GLint uloc_srcs_model, uloc_srcs_light_angle;
+    GLint uloc_srcs_model_opaque, uloc_srcs_colour_opaque;
 
     GLuint shader_transparent;
-    GLint uloc_srcs_model_transparent, uloc_srcs_col_transparent;
+    GLint uloc_srcs_model_transparent, uloc_srcs_color_transparent, uloc_srcs_alpha_transparent;
 
     GLuint shader_composite;
     GLint uloc_opaque_color_tex, uloc_oit_accum_tex, uloc_oit_reveal_tex;
@@ -408,31 +413,33 @@ int init_renderer(simctx *ctx) {
         model[MAT_IDX(2, 2, 4, 4)] = get_em_field_depth(renderer.field);
         model[MAT_IDX(3, 3, 4, 4)] = 1;
 
-        GLuint pwireframe = renderer.shader_wireframe;
-        glUseProgram(pwireframe);
-        glUniformMatrix4fv(glGetUniformLocation(pwireframe, "model"), 1, GL_FALSE, model);
+        glUseProgram(renderer.shader_wireframe);
+        glUniformMatrix4fv(glGetUniformLocation(renderer.shader_wireframe, "model"), 1, GL_FALSE, model);
     }
 
     // opaque sources uniform locations
-    GLuint psources = renderer.shader_opaque;
-    glUseProgram(psources);
-    renderer.uloc_srcs_model = glGetUniformLocation(psources, "model");
-    renderer.uloc_srcs_light_angle = glGetUniformLocation(psources, "light_angle");
+    glUseProgram(renderer.shader_opaque);
+    renderer.uloc_srcs_model_opaque = glGetUniformLocation(renderer.shader_opaque, "model");
+    renderer.uloc_srcs_colour_opaque = glGetUniformLocation(renderer.shader_opaque, "color");
+    glUniform3f(renderer.uloc_srcs_colour_opaque, 1.0f, 0.0f, 1.0f);
+
     glUseProgram(0);
 
     // transparent sources uniform locations
-    GLuint psources2 = renderer.shader_transparent;
-    glUseProgram(psources2);
-    renderer.uloc_srcs_model_transparent = glGetUniformLocation(psources2, "model");
-    renderer.uloc_srcs_col_transparent = glGetUniformLocation(psources2, "col");
+    glUseProgram(renderer.shader_transparent);
+    renderer.uloc_srcs_model_transparent = glGetUniformLocation(renderer.shader_transparent, "model");
+    renderer.uloc_srcs_color_transparent = glGetUniformLocation(renderer.shader_transparent, "color");
+    renderer.uloc_srcs_alpha_transparent = glGetUniformLocation(renderer.shader_transparent, "alpha");
+    glUniform3f(renderer.uloc_srcs_color_transparent, 0.0f, 0.0f, 1.0f);
+    glUniform1f(renderer.uloc_srcs_alpha_transparent, 0.5f);
     glUseProgram(0);
 
     // composite uniforms
-    GLuint pcomp = renderer.shader_composite;
-    glUseProgram(pcomp);
-    renderer.uloc_oit_accum_tex = glGetUniformLocation(pcomp, "oit_accum");
-    renderer.uloc_oit_reveal_tex = glGetUniformLocation(pcomp, "oit_reveal");
-    renderer.uloc_opaque_color_tex = glGetUniformLocation(pcomp, "opaque_color");
+
+    glUseProgram(renderer.shader_composite);
+    renderer.uloc_oit_accum_tex = glGetUniformLocation(renderer.shader_composite, "oit_accum");
+    renderer.uloc_oit_reveal_tex = glGetUniformLocation(renderer.shader_composite, "oit_reveal");
+    renderer.uloc_opaque_color_tex = glGetUniformLocation(renderer.shader_composite, "opaque_color");
     glUseProgram(0);
 
     printf("GL init error: %x\n", glGetError());
@@ -455,7 +462,7 @@ static void opaque_pass() {
     // OPAQUE PASS
     // writes depth and color, reads none
     glBindFramebuffer(GL_FRAMEBUFFER, renderer.opaque_fbo);
-    glClearColor(0.3f, 0.2f, 0.1f, 0.0f);
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     glEnable(GL_DEPTH_TEST);
@@ -474,7 +481,7 @@ static void opaque_pass() {
     mat4_from_quat(container_rotator, rotation_axis);
 
     glUseProgram(renderer.shader_opaque);
-    glUniform3f(renderer.uloc_srcs_light_angle, -0.3f, 1.0f, 0.1f);
+
     float model[16];
     mat_identity(model, 4);
 
@@ -484,7 +491,7 @@ static void opaque_pass() {
         model[1 + 3 * 4] = source_positions[i][1];
         model[2 + 3 * 4] = source_positions[i][2];
 
-        glUniformMatrix4fv(renderer.uloc_srcs_model, 1, GL_FALSE, model);
+        glUniformMatrix4fv(renderer.uloc_srcs_model_opaque, 1, GL_FALSE, model);
         mesh_draw(renderer.unit_cube, GL_TRIANGLES);
     }
 }
@@ -497,12 +504,18 @@ static void transparent_pass() {
     glClearBufferfv(GL_COLOR, 0, clear_accum);
     glClearBufferfv(GL_COLOR, 1, clear_reveal);
 
+    glDisable(GL_SAMPLE_ALPHA_TO_COVERAGE);
+    glDisable(GL_SAMPLE_COVERAGE);
+
     // Read opaque passes depth, do not write.
+    glEnable(GL_DEPTH_TEST);
     glDepthMask(GL_FALSE);
     glDepthFunc(GL_LESS);
 
     glEnable(GL_BLEND);
+    glBlendEquationi(0, GL_FUNC_ADD);
     glBlendFunci(0, GL_ONE, GL_ONE);
+    glBlendEquationi(1, GL_FUNC_ADD);
     glBlendFunci(1, GL_ZERO, GL_ONE_MINUS_SRC_ALPHA);
 
     float axis[3] = {4, 4, -1};
@@ -515,7 +528,6 @@ static void transparent_pass() {
 
     {  // Sources transparent
         glUseProgram(renderer.shader_transparent);
-        glUniform3f(renderer.uloc_srcs_col_transparent, 0.3f, 0.6f, 0.1f);
         float model[16];
         mat_identity(model, 4);
 
@@ -534,7 +546,18 @@ static void transparent_pass() {
     glDisable(GL_BLEND);
 }
 
+float light_angle_q[4] = {0, 1.0f, 0};
+
 void render_current() {
+    float axis[3] = {0, 0, 1};
+    vec_normalize(axis, axis, 3);
+    float angle = 0.01;
+    float s = sin(angle);
+    float rotation_axis[4] = {cos(angle), axis[0] * s, axis[1] * s, axis[2] * s};
+    // quat_sandwitch(light_angle_q, light_angle_q, rotation_axis);
+
+    float *light_angle = light_angle_q + 1;
+
     {  // update per frame uniform data
         struct frame_data frame_data = {0};
         struct camera *c = &renderer.camera;
@@ -542,6 +565,15 @@ void render_current() {
         memcpy(frame_data.view, c->view, 16 * sizeof(float));
         mat_mul(frame_data.view_proj, c->proj, c->view, 4, 4, 4);
         memcpy(frame_data.camera_pos, c->pos, 3 * sizeof(float));
+        frame_data.light_angle[0] = light_angle[0];
+        frame_data.light_angle[1] = light_angle[1];
+        frame_data.light_angle[2] = light_angle[2];
+        frame_data.direct_light_color[0] = 0.5f;
+        frame_data.direct_light_color[1] = 0.5f;
+        frame_data.direct_light_color[2] = 0.5f;
+        frame_data.ambient_light_color[0] = 0.3f;
+        frame_data.ambient_light_color[1] = 0.3f;
+        frame_data.ambient_light_color[2] = 0.3f;
 
         glBindBuffer(GL_UNIFORM_BUFFER, renderer.frame_data_ubo);
         glBufferSubData(

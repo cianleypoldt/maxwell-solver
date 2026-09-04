@@ -7,8 +7,6 @@ layout(std140, binding = 0) uniform frame_data
     mat4 view;
     mat4 proj;
     mat4 view_proj;
-    vec3 camera_pos;
-    float time;
 };
 
 uniform mat4 model;
