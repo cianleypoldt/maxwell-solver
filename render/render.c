@@ -1,4 +1,5 @@
 #include "render.h"
+#include "render_pass.h"
 
 #include "field.h"
 #include "glad/glad.h"
@@ -13,10 +14,6 @@
 #include <string.h>
 
 #include "util.h"
-
-typedef struct {
-    float x, y, z;
-} vec3;
 
 struct window {
     GLFWwindow *ptr;
@@ -144,7 +141,7 @@ static void texture_create(GLuint *texture, GLenum int_format, GLenum format, GL
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, clamp);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, clamp);
 
-    glTexImage2D(GL_TEXTURE_2D, 0, int_format, width, height, 0, format, type, ptr);
+    glTexImage2D(GL_TEXTURE_2D, 0, int_format, width, height, 0, format, GL_BYTE, ptr);
 
     glBindTexture(GL_TEXTURE_2D, 0);
 }
@@ -171,9 +168,9 @@ const float source_positions[N_SOURCES][3] = {
     {2.4f, -0.4f, -3.5f},
     {-1.7f, 3.0f, -7.5f},
     {1.3f, -2.0f, -2.5f},
-    {1.5f, 2.0f, -2.5f},
-    {1.5f, 0.2f, -1.5f},
-    {-1.3f, 1.0f, -1.5f}
+    {1.5f, 2.0f, -3.0f},
+    {1.5f, 2.0f, -1.5f},
+    {1.5f, 2.0f, -0.0f}
 };
 
 struct renderctx {
@@ -185,13 +182,10 @@ struct renderctx {
     GLuint frame_data_ubo;
     struct frame_data frame_data;
 
-    // Opaque FBO
-    GLuint opaque_color_tex, depth;
-    GLuint opaque_fbo;
+    rt_handle opaque_color_rt, global_depth_rt;
+    rt_handle wboit_accum_rt, wboit_reveal_rt;
 
-    // transparency FBO resources
-    GLuint oit_accum_tex, oit_reveal_tex;
-    GLuint oit_fbo;
+    render_pass opaque_rp, wboit_rp;
 
     // Borders, probably temp
     struct mesh fullscreen_quad;
@@ -210,11 +204,6 @@ struct renderctx {
     // Sources, probably temp & to be included in general opaque abstraction
     GLuint shader_wireframe;
     GLint uloc_wf_model;
-
-    // Game plan:
-    //  1. render opaque into opaque FBO
-    //  2. render volume, as if it were regular WOIT geometry, sample opaque depth explicitly as a texture
-    //  3. render WOIT geometry, bind opaque depth for culling implicitly
 
 } renderer;
 
@@ -324,7 +313,6 @@ static uint32_t CUBE_INDICES[36] = {
 	0, 2, 3, 0, 3, 1, // -Z
 	4, 5, 7, 4, 7, 6, // +Z
 };
-
 static uint32_t WIREFRAME_CUBE_INDICES[36] = {
     0, 1, 1, 3, 3, 2, 2, 0,        // z = -0.5 face
     4, 5, 5, 7, 7, 6, 6, 4,    // z = +0.5 face
@@ -358,42 +346,50 @@ int init_renderer(simctx *ctx) {
         glBindBuffer(GL_UNIFORM_BUFFER, 0);
     }
 
-    {  // Renderpass / framebuffer resources
-        // Opaque Pass resources
-        texture_create(&renderer.opaque_color_tex, GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, renderer.window.width, renderer.window.height, GL_NEAREST, GL_CLAMP_TO_EDGE, NULL);
-        texture_create(&renderer.depth, GL_DEPTH_COMPONENT24, GL_DEPTH_COMPONENT, GL_FLOAT, renderer.window.width, renderer.window.height, GL_NEAREST, GL_CLAMP_TO_EDGE, NULL);
+    // render target & pass initialization
+    render_target_desc rtd = {
+        .internal_format = GL_RGBA8,
+        .tex_sample_filter = GL_NEAREST,
+        .tex_sample_wrap = GL_CLAMP_TO_EDGE,
+        .clear_mask = {0, 0, 0, 0},
+        .enable_blending = 0
+    };
 
-        glGenFramebuffers(1, &renderer.opaque_fbo);
-        glBindFramebuffer(GL_FRAMEBUFFER, renderer.opaque_fbo);
+    renderer.opaque_color_rt = render_target_create(rtd, renderer.window.width, renderer.window.height);
 
-        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, renderer.opaque_color_tex, 0);
-        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, renderer.depth, 0);
+    rtd.internal_format = GL_DEPTH_COMPONENT24;
+    renderer.global_depth_rt = render_target_create(rtd, renderer.window.width, renderer.window.height);
 
-        glDrawBuffers(1, (GLenum[1]){GL_COLOR_ATTACHMENT0});
+    rtd.enable_blending = 1;
+    rtd.blend_equation = GL_FUNC_ADD;
+    rtd.blendfunc_src = GL_ONE;
+    rtd.blendfunc_dest = GL_ONE;
+    rtd.internal_format = GL_RGBA16F;
+    renderer.wboit_accum_rt = render_target_create(rtd, renderer.window.width, renderer.window.height);
 
-        if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
-            printf("opaque fb fail\n");
+    rtd.blend_equation = GL_FUNC_ADD;
+    rtd.blendfunc_src = GL_ZERO;
+    rtd.blendfunc_dest = GL_ONE_MINUS_SRC_ALPHA;
+    rtd.internal_format = GL_R16F;
+    renderer.wboit_reveal_rt = render_target_create(rtd, renderer.window.width, renderer.window.height);
 
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    render_pass_init(
+        &renderer.opaque_rp,
+        &renderer.opaque_color_rt,
+        (int[1]){0},
+        1,
+        renderer.global_depth_rt,
+        DEPTH
+    );
 
-        // Transparency Pass resources
-        texture_create(&renderer.oit_accum_tex, GL_RGBA16F, GL_RGBA, GL_HALF_FLOAT, renderer.window.width, renderer.window.height, GL_NEAREST, GL_CLAMP_TO_EDGE, NULL);
-        texture_create(&renderer.oit_reveal_tex, GL_R16F, GL_RED, GL_HALF_FLOAT, renderer.window.width, renderer.window.height, GL_NEAREST, GL_CLAMP_TO_EDGE, NULL);
-
-        glGenFramebuffers(1, &renderer.oit_fbo);
-        glBindFramebuffer(GL_FRAMEBUFFER, renderer.oit_fbo);
-
-        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, renderer.oit_accum_tex, 0);
-        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, renderer.oit_reveal_tex, 0);
-        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, renderer.depth, 0);
-
-        glDrawBuffers(2, (GLenum[2]){GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1});
-
-        if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
-            printf("woit fb fail\n");
-
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    }
+    render_pass_init(
+        &renderer.wboit_rp,
+        (rt_handle[2]){renderer.wboit_accum_rt, renderer.wboit_reveal_rt},
+        (int[2]){0, 1},
+        2,
+        renderer.global_depth_rt,
+        DEPTH
+    );
 
     // Meshes
     mesh_create(&renderer.fullscreen_quad, QUAD_VERTS, ARRAY_COUNT(QUAD_VERTS), QUAD_INDICES, ARRAY_COUNT(QUAD_INDICES), POS, 3);
@@ -454,6 +450,10 @@ void deinit_renderer() {
     glDeleteProgram(renderer.shader_opaque);
     glDeleteProgram(renderer.shader_wireframe);
 
+    render_pass_delete(&renderer.opaque_rp);
+    render_pass_delete(&renderer.wboit_rp);
+    render_targets_deinit_all();
+
     printf("GL Error: %x\n", glGetError());
     destroy_window();
 }
@@ -461,7 +461,7 @@ void deinit_renderer() {
 static void opaque_pass() {
     // OPAQUE PASS
     // writes depth and color, reads none
-    glBindFramebuffer(GL_FRAMEBUFFER, renderer.opaque_fbo);
+    render_pass_begin(&renderer.opaque_rp);
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
@@ -469,7 +469,9 @@ static void opaque_pass() {
 
     // Volume Borders
     glUseProgram(renderer.shader_wireframe);
-    mesh_draw(renderer.unit_cube_wireframe, GL_LINES);
+    // mesh_draw(renderer.unit_cube_wireframe, GL_LINES);
+    // TEMP
+    mesh_draw(renderer.unit_cube, GL_TRIANGLES);
 
     // Sources opaque
     float axis[3] = {4, 4, -1};
@@ -494,29 +496,29 @@ static void opaque_pass() {
         glUniformMatrix4fv(renderer.uloc_srcs_model_opaque, 1, GL_FALSE, model);
         mesh_draw(renderer.unit_cube, GL_TRIANGLES);
     }
+    glDisable(GL_DEPTH_TEST);
 }
 
 static void transparent_pass() {
     // TRANSPARENT PASS
-    glBindFramebuffer(GL_FRAMEBUFFER, renderer.oit_fbo);
+    // bind and clear accumulation and revealage
+    render_pass_begin(&renderer.wboit_rp);
     const GLfloat clear_accum[4] = {0.0f, 0.0f, 0.0f, 0.0f};
     const GLfloat clear_reveal[4] = {1.0f, 0.0f, 0.0f, 0.0f};
     glClearBufferfv(GL_COLOR, 0, clear_accum);
     glClearBufferfv(GL_COLOR, 1, clear_reveal);
-
-    glDisable(GL_SAMPLE_ALPHA_TO_COVERAGE);
-    glDisable(GL_SAMPLE_COVERAGE);
 
     // Read opaque passes depth, do not write.
     glEnable(GL_DEPTH_TEST);
     glDepthMask(GL_FALSE);
     glDepthFunc(GL_LESS);
 
+    // Blending
     glEnable(GL_BLEND);
     glBlendEquationi(0, GL_FUNC_ADD);
-    glBlendFunci(0, GL_ONE, GL_ONE);
-    glBlendEquationi(1, GL_FUNC_ADD);
-    glBlendFunci(1, GL_ZERO, GL_ONE_MINUS_SRC_ALPHA);
+    glBlendFunci(0, GL_ONE, GL_ONE);                   // dest = dest + src
+    glBlendEquationi(0, GL_FUNC_ADD);
+    glBlendFunci(1, GL_ZERO, GL_ONE_MINUS_SRC_ALPHA);  // alpha_dest = 0 + (1 - alpha_src) * alpha_dest     -> equivalent to prod_{i=0}^n (1 - alpha_src_i)
 
     float axis[3] = {4, 4, -1};
     vec_normalize(axis, axis, 3);
@@ -532,7 +534,7 @@ static void transparent_pass() {
         mat_identity(model, 4);
 
         for (int i = N_SOURCES / 2; i < N_SOURCES; i++) {
-            mat_mul(model, container_rotator, model, 4, 4, 4);
+            // mat_mul(model, container_rotator, model, 4, 4, 4);
             model[0 + 3 * 4] = source_positions[i][0];
             model[1 + 3 * 4] = source_positions[i][1];
             model[2 + 3 * 4] = source_positions[i][2];
@@ -592,21 +594,14 @@ void render_current() {
     glClear(GL_COLOR_BUFFER_BIT);
     glUseProgram(renderer.shader_composite);
 
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, renderer.opaque_color_tex);
+    render_target_bind_texture(renderer.opaque_color_rt, 0);
     glUniform1i(renderer.uloc_opaque_color_tex, 0);
-    glActiveTexture(GL_TEXTURE1);
-    glBindTexture(GL_TEXTURE_2D, renderer.oit_accum_tex);
+    render_target_bind_texture(renderer.wboit_accum_rt, 1);
     glUniform1i(renderer.uloc_oit_accum_tex, 1);
-    glActiveTexture(GL_TEXTURE2);
-    glBindTexture(GL_TEXTURE_2D, renderer.oit_reveal_tex);
+    render_target_bind_texture(renderer.wboit_reveal_rt, 2);
     glUniform1i(renderer.uloc_oit_reveal_tex, 2);
 
     mesh_draw(renderer.fullscreen_quad, GL_TRIANGLES);
-
-    // Volumme
-    // bind shader, accumulation, depth, textures, update uniforms, vao
-    // render volume over geometry
 
     glfwSwapBuffers(renderer.window.ptr);
     return;

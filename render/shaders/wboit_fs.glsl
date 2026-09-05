@@ -40,15 +40,17 @@ void main()
         diffuse_mult = 0.2f;
         fresnel_mult = 1.0f;
     }
+    fresnel_mult = 1.0f;
 
     vec3 lit_color = color * (ambient_light_color_v4.rgb + diffuse_mult * diffuse * direct_light_color_v4.rgb);
 
     // TEMP
-    // lit_color = vec3(gl_FrontFacing ? diffuse : 0);
 
     // effective opacity with fresnel and alpha
     float opacity = alpha + fresnel * fresnel_mult;
 
+    // TEMP
+
     frag_accum = vec4(lit_color * opacity, opacity);
-    frag_reveal = vec4(0.1, 0.0, 0.0, 0.1);
+    frag_reveal = vec4(opacity);
 }
