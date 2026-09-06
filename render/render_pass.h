@@ -26,10 +26,11 @@ typedef struct {
 } render_target_desc;
 
 typedef struct {
+    int generation;
+
     render_target_desc rt_desc;
     int width, height;
-    int binding_slot;  // -1 when unbound
-    int do_clear;
+    int texture_unit_binding;  // -1 when unbound
 
     GLuint texture;
 } render_target;
@@ -39,7 +40,7 @@ void render_targets_deinit_all();  // no individual deletion, fine for small sco
 
 void render_target_resize(const rt_handle rth, int width, int height);
 void render_target_bind_texture(const rt_handle rth, int binding_slot);
-void render_tartet_unbind_texture(const rt_handle rth);
+void render_target_unbind_texture(const rt_handle rth);
 
 int render_target_validate_handle(const rt_handle rth);
 render_target *render_target_from_handle(const rt_handle rth);
@@ -103,14 +104,43 @@ typedef struct {
 } GL_state;
 */
 
+#define INVALID_BIND_POINT -1
+
+typedef struct {
+    int generation;
+    int clear_enabled;
+    int attachement_index;
+    rt_handle rth;
+} rp_internal_target_handle;
+
+#define MAX_COLOR_TARGETS_PER_RENDER_PASS 24
+
 typedef struct {
     GLuint fbo;
+    rp_depth_mode depth_mode;
+    rp_internal_target_handle depth_target;
+    rp_internal_target_handle colored_handles[MAX_COLOR_TARGETS_PER_RENDER_PASS];
+    int colored_target_count;
 } render_pass;
 
-// TODO: allow resize somehow
+typedef struct {
+    int attachement_index;
+    int clear_enabled;
+    rt_handle rth;
+} rp_target_desc;
 
-int render_pass_init(render_pass *rp, rt_handle *rt_colored, int *rt_colored_bind_points, int rt_colored_count, rt_handle rt_depth, rp_depth_mode depth_mode);
+// *targets is an array of target descriptions of length target_count. If depth_mode == DEPTH, the last item must be the depth buffer description.
+// Shaders can write to the render_target's texture using the syntax layout(location = 0) out vec4 color when it is bound
+// targets[i].attachement_index defines the location
+// Since the depth buffer cannot have an attachement index, set targets[target_count - 1].bind_point to INVALID_BIND_POINT
+int render_pass_init(render_pass *rp, rp_target_desc *targets, int target_count, rp_depth_mode depth_mode);
+
 void render_pass_delete(render_pass *rp);
+
+// binds fbo, clears buffers, sets blending state
 void render_pass_begin(render_pass *rp);
+
+// render to screen
+void render_pass_begin_default(GLbitfield mask, float clear_color[4], float clear_depth);
 
 #endif

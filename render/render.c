@@ -8,6 +8,7 @@
 #include <H5Lpublic.h>
 #include <complex.h>
 #include <math.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -198,6 +199,10 @@ struct renderctx {
     GLuint shader_transparent;
     GLint uloc_srcs_model_transparent, uloc_srcs_color_transparent, uloc_srcs_alpha_transparent;
 
+    GLuint shader_volume;
+    GLuint Etex, Btex;
+    float *magnitude_buffer;
+
     GLuint shader_composite;
     GLint uloc_opaque_color_tex, uloc_oit_accum_tex, uloc_oit_reveal_tex;
 
@@ -219,7 +224,7 @@ static void init_camera() {
     c->far_plane = 100.0f;
 
     c->rot[0] = 1.0f;
-    // c->pos[2] = -5.0f;
+    c->pos[2] = 5.0f;
 
     camera_build_proj(c);
     camera_build_view(c);
@@ -235,6 +240,10 @@ static void window_resize_callback(GLFWwindow *window, int width, int height) {
         renderer.camera.aspect = (float)width / height;
         camera_build_proj(&renderer.camera);
     }
+    render_target_resize(renderer.global_depth_rt, width, height);
+    render_target_resize(renderer.opaque_color_rt, width, height);
+    render_target_resize(renderer.wboit_accum_rt, width, height);
+    render_target_resize(renderer.wboit_reveal_rt, width, height);
 }
 
 static void cursor_pos_callback(GLFWwindow *window, double x, double y) {
@@ -351,12 +360,12 @@ int init_renderer(simctx *ctx) {
         .internal_format = GL_RGBA8,
         .tex_sample_filter = GL_NEAREST,
         .tex_sample_wrap = GL_CLAMP_TO_EDGE,
-        .clear_mask = {0, 0, 0, 0},
+        .clear_mask = {0, 0, 0, 0.0f},
         .enable_blending = 0
     };
-
     renderer.opaque_color_rt = render_target_create(rtd, renderer.window.width, renderer.window.height);
 
+    memcpy(rtd.clear_mask, (float[4]){1.0f, 0.0f, 0.0f, 0.0f}, sizeof(float) * 4);
     rtd.internal_format = GL_DEPTH_COMPONENT24;
     renderer.global_depth_rt = render_target_create(rtd, renderer.window.width, renderer.window.height);
 
@@ -365,31 +374,28 @@ int init_renderer(simctx *ctx) {
     rtd.blendfunc_src = GL_ONE;
     rtd.blendfunc_dest = GL_ONE;
     rtd.internal_format = GL_RGBA16F;
+    memcpy(rtd.clear_mask, (float[4]){0.0f, 0.0f, 0.0f, 0.0f}, sizeof(float) * 4);
     renderer.wboit_accum_rt = render_target_create(rtd, renderer.window.width, renderer.window.height);
 
     rtd.blend_equation = GL_FUNC_ADD;
     rtd.blendfunc_src = GL_ZERO;
     rtd.blendfunc_dest = GL_ONE_MINUS_SRC_ALPHA;
     rtd.internal_format = GL_R16F;
+    memcpy(rtd.clear_mask, (float[4]){1.0f, 0.0f, 0.0f, 0.0f}, sizeof(float) * 4);
     renderer.wboit_reveal_rt = render_target_create(rtd, renderer.window.width, renderer.window.height);
 
-    render_pass_init(
-        &renderer.opaque_rp,
-        &renderer.opaque_color_rt,
-        (int[1]){0},
-        1,
-        renderer.global_depth_rt,
-        DEPTH
-    );
+    rp_target_desc opaque_pass_targets[2] = {
+        {.rth = renderer.opaque_color_rt, .attachement_index = 0, .clear_enabled = 1},
+        {.rth = renderer.global_depth_rt, .attachement_index = INVALID_BIND_POINT, .clear_enabled = 1}
+    };
+    render_pass_init(&renderer.opaque_rp, opaque_pass_targets, 2, DEPTH);
 
-    render_pass_init(
-        &renderer.wboit_rp,
-        (rt_handle[2]){renderer.wboit_accum_rt, renderer.wboit_reveal_rt},
-        (int[2]){0, 1},
-        2,
-        renderer.global_depth_rt,
-        DEPTH
-    );
+    rp_target_desc wboit_pass_targets[3] = {
+        {.rth = renderer.wboit_accum_rt, .attachement_index = 0, .clear_enabled = 1},
+        {.rth = renderer.wboit_reveal_rt, .attachement_index = 1, .clear_enabled = 1},
+        {.rth = renderer.global_depth_rt, .attachement_index = INVALID_BIND_POINT, .clear_enabled = 0}
+    };
+    render_pass_init(&renderer.wboit_rp, wboit_pass_targets, 3, DEPTH);
 
     // Meshes
     mesh_create(&renderer.fullscreen_quad, QUAD_VERTS, ARRAY_COUNT(QUAD_VERTS), QUAD_INDICES, ARRAY_COUNT(QUAD_INDICES), POS, 3);
@@ -400,6 +406,7 @@ int init_renderer(simctx *ctx) {
     renderer.shader_wireframe = create_program("render/shaders/orange_vs.glsl", "render/shaders/orange_fs.glsl");
     renderer.shader_opaque = create_program("render/shaders/source_vs.glsl", "render/shaders/source_fs.glsl");
     renderer.shader_transparent = create_program("render/shaders/wboit_vs.glsl", "render/shaders/wboit_fs.glsl");
+    renderer.shader_volume = create_program("render/shaders/volume_vs.glsl", "render/shaders/volume_fs.glsl");
     renderer.shader_composite = create_program("render/shaders/flat_vs.glsl", "render/shaders/composite_fs.glsl");
 
     {  // wireframe uniform locatios
@@ -430,8 +437,41 @@ int init_renderer(simctx *ctx) {
     glUniform1f(renderer.uloc_srcs_alpha_transparent, 0.5f);
     glUseProgram(0);
 
-    // composite uniforms
+    // Pathtracer init
+    {
+        glActiveTexture(GL_TEXTURE0 + 0);
+        glBindTexture(GL_TEXTURE_3D, renderer.Etex);
+        glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+        glTexImage3D(GL_TEXTURE_3D, 0, GL_R32F, renderer.field->Nz, renderer.field->Ny, renderer.field->Nx, 0, GL_RED, GL_FLOAT, NULL);
 
+        glActiveTexture(GL_TEXTURE0 + 1);
+        glBindTexture(GL_TEXTURE_3D, renderer.Btex);
+        glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+        glTexImage3D(GL_TEXTURE_3D, 0, GL_R32F, renderer.field->Nz, renderer.field->Ny, renderer.field->Nx, 0, GL_RED, GL_FLOAT, NULL);
+
+        float model[16] = {0};
+        model[MAT_IDX(0, 0, 4, 4)] = get_em_field_width(renderer.field);
+        model[MAT_IDX(1, 1, 4, 4)] = get_em_field_height(renderer.field);
+        model[MAT_IDX(2, 2, 4, 4)] = get_em_field_depth(renderer.field);
+        model[MAT_IDX(3, 3, 4, 4)] = 1;
+
+        glUseProgram(renderer.shader_volume);
+        glUniformMatrix4fv(glGetUniformLocation(renderer.shader_volume, "model"), 1, GL_FALSE, model);
+        glUniform1i(glGetUniformLocation(renderer.shader_volume, "Etex"), 0);
+        glUniform1i(glGetUniformLocation(renderer.shader_volume, "Btex"), 1);
+
+        renderer.magnitude_buffer = malloc(get_em_field_cell_count(renderer.field) * sizeof(float));
+    }
+
+    // composite uniforms
     glUseProgram(renderer.shader_composite);
     renderer.uloc_oit_accum_tex = glGetUniformLocation(renderer.shader_composite, "oit_accum");
     renderer.uloc_oit_reveal_tex = glGetUniformLocation(renderer.shader_composite, "oit_reveal");
@@ -447,31 +487,36 @@ void deinit_renderer() {
     mesh_destroy(&renderer.unit_cube);
     mesh_destroy(&renderer.unit_cube_wireframe);
 
-    glDeleteProgram(renderer.shader_opaque);
     glDeleteProgram(renderer.shader_wireframe);
+    glDeleteProgram(renderer.shader_opaque);
+    glDeleteProgram(renderer.shader_transparent);
+    glDeleteProgram(renderer.shader_volume);
+    glDeleteProgram(renderer.shader_composite);
+
+    glDeleteTextures(1, &renderer.Etex);
+    glDeleteTextures(1, &renderer.Btex);
 
     render_pass_delete(&renderer.opaque_rp);
     render_pass_delete(&renderer.wboit_rp);
     render_targets_deinit_all();
+    free(renderer.magnitude_buffer);
 
     printf("GL Error: %x\n", glGetError());
     destroy_window();
 }
 
 static void opaque_pass() {
+    glDepthFunc(GL_LESS);
+
     // OPAQUE PASS
     // writes depth and color, reads none
     render_pass_begin(&renderer.opaque_rp);
-    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     glEnable(GL_DEPTH_TEST);
 
     // Volume Borders
     glUseProgram(renderer.shader_wireframe);
-    // mesh_draw(renderer.unit_cube_wireframe, GL_LINES);
-    // TEMP
-    mesh_draw(renderer.unit_cube, GL_TRIANGLES);
+    mesh_draw(renderer.unit_cube_wireframe, GL_LINES);
 
     // Sources opaque
     float axis[3] = {4, 4, -1};
@@ -499,6 +544,8 @@ static void opaque_pass() {
     glDisable(GL_DEPTH_TEST);
 }
 
+static void buffer_components(float *restrict Fx, float *restrict Fy, float *restrict Fz, GLuint texture);
+
 static void transparent_pass() {
     // TRANSPARENT PASS
     // bind and clear accumulation and revealage
@@ -515,10 +562,10 @@ static void transparent_pass() {
 
     // Blending
     glEnable(GL_BLEND);
-    glBlendEquationi(0, GL_FUNC_ADD);
-    glBlendFunci(0, GL_ONE, GL_ONE);                   // dest = dest + src
-    glBlendEquationi(0, GL_FUNC_ADD);
-    glBlendFunci(1, GL_ZERO, GL_ONE_MINUS_SRC_ALPHA);  // alpha_dest = 0 + (1 - alpha_src) * alpha_dest     -> equivalent to prod_{i=0}^n (1 - alpha_src_i)
+    // glBlendEquationi(0, GL_FUNC_ADD);
+    // glBlendFunci(0, GL_ONE, GL_ONE);                   // dest = dest + src
+    // glBlendEquationi(0, GL_FUNC_ADD);
+    // glBlendFunci(1, GL_ZERO, GL_ONE_MINUS_SRC_ALPHA);  // alpha_dest = 0 + (1 - alpha_src) * alpha_dest     -> equivalent to prod_{i=0}^n (1 - alpha_src_i)
 
     float axis[3] = {4, 4, -1};
     vec_normalize(axis, axis, 3);
@@ -543,23 +590,18 @@ static void transparent_pass() {
             mesh_draw(renderer.unit_cube, GL_TRIANGLES);
         }
     }
+
+    buffer_components(renderer.field->Ex, renderer.field->Ey, renderer.field->Ez, renderer.Etex);
+    buffer_components(renderer.field->Hz, renderer.field->Hy, renderer.field->Hz, renderer.Btex);
+
+    glUseProgram(renderer.shader_volume);
+    mesh_draw(renderer.unit_cube, GL_TRIANGLES);
+
     glDisable(GL_DEPTH_TEST);
     glDepthMask(GL_TRUE);
-    glDisable(GL_BLEND);
 }
 
-float light_angle_q[4] = {0, 1.0f, 0};
-
 void render_current() {
-    float axis[3] = {0, 0, 1};
-    vec_normalize(axis, axis, 3);
-    float angle = 0.01;
-    float s = sin(angle);
-    float rotation_axis[4] = {cos(angle), axis[0] * s, axis[1] * s, axis[2] * s};
-    // quat_sandwitch(light_angle_q, light_angle_q, rotation_axis);
-
-    float *light_angle = light_angle_q + 1;
-
     {  // update per frame uniform data
         struct frame_data frame_data = {0};
         struct camera *c = &renderer.camera;
@@ -567,9 +609,9 @@ void render_current() {
         memcpy(frame_data.view, c->view, 16 * sizeof(float));
         mat_mul(frame_data.view_proj, c->proj, c->view, 4, 4, 4);
         memcpy(frame_data.camera_pos, c->pos, 3 * sizeof(float));
-        frame_data.light_angle[0] = light_angle[0];
-        frame_data.light_angle[1] = light_angle[1];
-        frame_data.light_angle[2] = light_angle[2];
+        frame_data.light_angle[0] = 0.0f;
+        frame_data.light_angle[1] = 1.0f;
+        frame_data.light_angle[2] = 0.0f;
         frame_data.direct_light_color[0] = 0.5f;
         frame_data.direct_light_color[1] = 0.5f;
         frame_data.direct_light_color[2] = 0.5f;
@@ -589,22 +631,34 @@ void render_current() {
     opaque_pass();
     transparent_pass();
 
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
-    glClear(GL_COLOR_BUFFER_BIT);
-    glUseProgram(renderer.shader_composite);
+    render_pass_begin_default(GL_COLOR_BUFFER_BIT, (float[4]){}, 0.0f);
 
-    render_target_bind_texture(renderer.opaque_color_rt, 0);
-    glUniform1i(renderer.uloc_opaque_color_tex, 0);
-    render_target_bind_texture(renderer.wboit_accum_rt, 1);
-    glUniform1i(renderer.uloc_oit_accum_tex, 1);
-    render_target_bind_texture(renderer.wboit_reveal_rt, 2);
-    glUniform1i(renderer.uloc_oit_reveal_tex, 2);
+    glUseProgram(renderer.shader_composite);
+    render_target_bind_texture(renderer.opaque_color_rt, 2);
+    glUniform1i(renderer.uloc_opaque_color_tex, 2);
+    render_target_bind_texture(renderer.wboit_accum_rt, 3);
+    glUniform1i(renderer.uloc_oit_accum_tex, 3);
+    render_target_bind_texture(renderer.wboit_reveal_rt, 4);
+    glUniform1i(renderer.uloc_oit_reveal_tex, 4);
 
     mesh_draw(renderer.fullscreen_quad, GL_TRIANGLES);
 
     glfwSwapBuffers(renderer.window.ptr);
     return;
+}
+
+static void buffer_components(float *restrict Fx, float *restrict Fy, float *restrict Fz, GLuint texture) {
+    for (size_t i = 0; i < renderer.field->Nx; i++) {
+        for (size_t j = 0; j < renderer.field->Ny; j++) {
+            size_t idx = i * renderer.field->stride_x + j * renderer.field->stride_y;
+            for (size_t k = 0; k < renderer.field->Nz; k++) {
+                renderer.magnitude_buffer[idx] = sqrtf(Fx[idx] * Fx[idx] + Fy[idx] * Fy[idx] + Fz[idx] * Fz[idx]);
+                idx++;
+            }
+        }
+    }
+    glBindTexture(GL_TEXTURE_3D, texture);
+    glTexSubImage3D(GL_TEXTURE_3D, 0, 0, 0, 0, renderer.field->Nz, renderer.field->Ny, renderer.field->Nx, GL_RED, GL_FLOAT, renderer.magnitude_buffer);
 }
 
 #define CAMERA_SPEED_HORIZONTAL 0.2

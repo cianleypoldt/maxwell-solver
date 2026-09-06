@@ -32,15 +32,15 @@ void main()
     float diffuse_mult, fresnel_mult;
 
     if (gl_FrontFacing) {
-        diffuse_mult = 0.5f;
+        diffuse_mult = 0.3f;
         fresnel_mult = 1.0f;
     } else {
         // For inside faces diffuse lighting occurs due to refraction, but is less pronounced.
         // mult = 0.0f looks wrong.
-        diffuse_mult = 0.2f;
+        diffuse_mult = 0.1f;
         fresnel_mult = 1.0f;
     }
-    fresnel_mult = 1.0f;
+    fresnel_mult = 0.0f;
 
     vec3 lit_color = color * (ambient_light_color_v4.rgb + diffuse_mult * diffuse * direct_light_color_v4.rgb);
 

@@ -8,6 +8,8 @@ uniform sampler2D oit_reveal;
 
 in vec2 uv;
 
+// TODO: document weighted blended OIT somewhere so I don't unlearn
+
 void main()
 {
     vec3 background_color = texture(opaque_color, uv).rgb;
