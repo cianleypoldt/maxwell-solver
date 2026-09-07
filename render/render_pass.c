@@ -106,8 +106,6 @@ static int rp_framebuffer_rebuild(render_pass *rp) {
     glGenFramebuffers(1, &rp->fbo);
     glBindFramebuffer(GL_FRAMEBUFFER, rp->fbo);
 
-    if (rp->colored_target_count == 0) goto depth_assignment;
-
     int draw_buffer_count = 0;
     GLenum *draw_buffers = malloc(rp->colored_target_count * sizeof(GLenum));
 
@@ -123,7 +121,6 @@ static int rp_framebuffer_rebuild(render_pass *rp) {
     glDrawBuffers(draw_buffer_count, draw_buffers);
     free(draw_buffers);
 
-depth_assignment:
     if (rp->depth_mode == DEPTH) {
         render_target *rt = render_target_from_handle(rp->depth_target.rth);
         if (!rt) goto error;
@@ -145,12 +142,14 @@ error:
 
 static int ensure_complete_fbo(render_pass *rp) {
     for (int i = 0; i < rp->colored_target_count; i++) {
-        if (rp->colored_handles[i].generation != render_target_from_handle(rp->colored_handles[i].rth)->generation)
-            if (!rp_framebuffer_rebuild(rp)) return -1;
-        return 0;
+        if (rp->colored_handles[i].generation != render_target_from_handle(rp->colored_handles[i].rth)->generation) {
+            if (rp_framebuffer_rebuild(rp) >= 0)
+                return 0;
+            return -1;
+        }
     }
     if (rp->depth_target.generation != render_target_from_handle(rp->depth_target.rth)->generation)
-        if (!rp_framebuffer_rebuild(rp)) return -1;
+        if (rp_framebuffer_rebuild(rp) < 0) return -1;
     return 0;
 }
 
@@ -179,7 +178,9 @@ int render_pass_init(render_pass *rp, rp_target_desc *targets, int target_count,
             break;  // invalid path
     }
 
-    if (rp->colored_target_count > MAX_COLOR_TARGETS_PER_RENDER_PASS) return -1;
+    if (rp->colored_target_count > MAX_COLOR_TARGETS_PER_RENDER_PASS ||
+        rp->colored_target_count <= 0)
+        return -1;
 
     // handle colored render targets (and render_pass-wide blending)
     for (int i = 0; i < rp->colored_target_count; i++) {

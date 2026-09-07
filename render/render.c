@@ -162,7 +162,7 @@ struct frame_data {
 
 #define N_SOURCES 10
 const float source_positions[N_SOURCES][3] = {
-    {12.0f, 12.0f, 12.0f},
+    {0.0f, 0.8f, -0.2f},
     {2.0f, 5.0f, -15.0f},
     {-1.5f, -2.2f, -2.5f},
     {-3.8f, -2.0f, -12.3f},
@@ -296,10 +296,10 @@ static void destroy_window() {
 
 // clang-format off
 static float QUAD_VERTS[4*3] = {
-    -1.0f, -1.0f, 0,
-     1.0f, -1.0f, 0,
-    -1.0f,  1.0f, 0,
-     1.0f,  1.0f, 0
+    -1.0f, -1.0f, 0.0f,
+     1.0f, -1.0f, 0.0f,
+    -1.0f,  1.0f, 0.0f,
+     1.0f,  1.0f, 0.0f
 };
 static uint32_t QUAD_INDICES[6] = {
     0, 2, 3, 0, 3, 1
@@ -467,6 +467,8 @@ int init_renderer(simctx *ctx) {
         glUniformMatrix4fv(glGetUniformLocation(renderer.shader_volume, "model"), 1, GL_FALSE, model);
         glUniform1i(glGetUniformLocation(renderer.shader_volume, "Etex"), 0);
         glUniform1i(glGetUniformLocation(renderer.shader_volume, "Btex"), 1);
+        render_target_bind_texture(renderer.global_depth_rt, 5);
+        glUniform1i(glGetUniformLocation(renderer.shader_volume, "depth_tex"), 5);
 
         renderer.magnitude_buffer = malloc(get_em_field_cell_count(renderer.field) * sizeof(float));
     }
@@ -476,6 +478,7 @@ int init_renderer(simctx *ctx) {
     renderer.uloc_oit_accum_tex = glGetUniformLocation(renderer.shader_composite, "oit_accum");
     renderer.uloc_oit_reveal_tex = glGetUniformLocation(renderer.shader_composite, "oit_reveal");
     renderer.uloc_opaque_color_tex = glGetUniformLocation(renderer.shader_composite, "opaque_color");
+    glUniform1i(glGetUniformLocation(renderer.shader_volume, "depth_tex"), 5);
     glUseProgram(0);
 
     printf("GL init error: %x\n", glGetError());
@@ -562,10 +565,6 @@ static void transparent_pass() {
 
     // Blending
     glEnable(GL_BLEND);
-    // glBlendEquationi(0, GL_FUNC_ADD);
-    // glBlendFunci(0, GL_ONE, GL_ONE);                   // dest = dest + src
-    // glBlendEquationi(0, GL_FUNC_ADD);
-    // glBlendFunci(1, GL_ZERO, GL_ONE_MINUS_SRC_ALPHA);  // alpha_dest = 0 + (1 - alpha_src) * alpha_dest     -> equivalent to prod_{i=0}^n (1 - alpha_src_i)
 
     float axis[3] = {4, 4, -1};
     vec_normalize(axis, axis, 3);
@@ -593,6 +592,8 @@ static void transparent_pass() {
 
     buffer_components(renderer.field->Ex, renderer.field->Ey, renderer.field->Ez, renderer.Etex);
     buffer_components(renderer.field->Hz, renderer.field->Hy, renderer.field->Hz, renderer.Btex);
+
+    glDisable(GL_DEPTH_TEST);
 
     glUseProgram(renderer.shader_volume);
     mesh_draw(renderer.unit_cube, GL_TRIANGLES);

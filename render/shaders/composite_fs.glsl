@@ -5,6 +5,7 @@ out vec4 frag_color;
 uniform sampler2D opaque_color;
 uniform sampler2D oit_accum;
 uniform sampler2D oit_reveal;
+uniform sampler2D depth_tex;
 
 in vec2 uv;
 
