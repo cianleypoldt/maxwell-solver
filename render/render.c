@@ -39,6 +39,7 @@ struct camera {
     float pos[3];
     float rot[4];
 
+    float forward[3];
     float proj[16];
     float view[16];
 };
@@ -69,7 +70,7 @@ static void camera_build_proj(struct camera *camera) {
     M[3 + 2 * 4] = -1;
 }
 
-static void camera_build_view(struct camera *camera) {
+static void camera_build_view_and_forward(struct camera *camera) {
     mat_identity(camera->view, 4);
 
     // translation
@@ -84,6 +85,10 @@ static void camera_build_view(struct camera *camera) {
     mat4_from_quat(M, conj_rot);
 
     mat_mul(camera->view, M, camera->view, 4, 4, 4);
+
+    float q_forward[4] = {0.0f, 0.0f, 0.0f, -1.0f};
+    quat_sandwitch(q_forward, q_forward, camera->rot);
+    memcpy(camera->forward, q_forward + 1, 3 * sizeof(float));
 }
 
 struct mesh {
@@ -149,15 +154,12 @@ static void texture_create(GLuint *texture, GLenum int_format, GLenum format, GL
 
 // layout(std140), vec3 handled as vec4 to avoid padding.
 struct frame_data {
-    float proj[16];
-    float view[16];
     float view_proj[16];
     float camera_pos[4];
-    float light_angle[4];
-    float direct_light_color[4];
-    float ambient_light_color[4];
+    float camera_forward[4];
+    float viewport_size[2];
     float time;
-    float _pad[3];
+    float _pad[1];
 };
 
 #define N_SOURCES 10
@@ -227,7 +229,7 @@ static void init_camera() {
     c->pos[2] = 5.0f;
 
     camera_build_proj(c);
-    camera_build_view(c);
+    camera_build_view_and_forward(c);
 }
 
 static void window_resize_callback(GLFWwindow *window, int width, int height) {
@@ -469,7 +471,8 @@ int init_renderer(simctx *ctx) {
         glUniform1i(glGetUniformLocation(renderer.shader_volume, "Btex"), 1);
         render_target_bind_texture(renderer.global_depth_rt, 5);
         glUniform1i(glGetUniformLocation(renderer.shader_volume, "depth_tex"), 5);
-
+        glUniform1f(glGetUniformLocation(renderer.shader_volume, "near"), renderer.camera.near_plane);
+        glUniform1f(glGetUniformLocation(renderer.shader_volume, "far"), renderer.camera.far_plane);
         renderer.magnitude_buffer = malloc(get_em_field_cell_count(renderer.field) * sizeof(float));
     }
 
@@ -478,7 +481,7 @@ int init_renderer(simctx *ctx) {
     renderer.uloc_oit_accum_tex = glGetUniformLocation(renderer.shader_composite, "oit_accum");
     renderer.uloc_oit_reveal_tex = glGetUniformLocation(renderer.shader_composite, "oit_reveal");
     renderer.uloc_opaque_color_tex = glGetUniformLocation(renderer.shader_composite, "opaque_color");
-    glUniform1i(glGetUniformLocation(renderer.shader_volume, "depth_tex"), 5);
+    glUniform1i(glGetUniformLocation(renderer.shader_composite, "depth_tex"), 5);
     glUseProgram(0);
 
     printf("GL init error: %x\n", glGetError());
@@ -594,9 +597,14 @@ static void transparent_pass() {
     buffer_components(renderer.field->Hz, renderer.field->Hy, renderer.field->Hz, renderer.Btex);
 
     glDisable(GL_DEPTH_TEST);
+    glEnable(GL_CULL_FACE);
+    glCullFace(GL_FRONT);
+    glFrontFace(GL_CCW);
 
     glUseProgram(renderer.shader_volume);
     mesh_draw(renderer.unit_cube, GL_TRIANGLES);
+
+    glDisable(GL_CULL_FACE);
 
     glDisable(GL_DEPTH_TEST);
     glDepthMask(GL_TRUE);
@@ -606,19 +614,11 @@ void render_current() {
     {  // update per frame uniform data
         struct frame_data frame_data = {0};
         struct camera *c = &renderer.camera;
-        memcpy(frame_data.proj, c->proj, 16 * sizeof(float));
-        memcpy(frame_data.view, c->view, 16 * sizeof(float));
         mat_mul(frame_data.view_proj, c->proj, c->view, 4, 4, 4);
         memcpy(frame_data.camera_pos, c->pos, 3 * sizeof(float));
-        frame_data.light_angle[0] = 0.0f;
-        frame_data.light_angle[1] = 1.0f;
-        frame_data.light_angle[2] = 0.0f;
-        frame_data.direct_light_color[0] = 0.5f;
-        frame_data.direct_light_color[1] = 0.5f;
-        frame_data.direct_light_color[2] = 0.5f;
-        frame_data.ambient_light_color[0] = 0.3f;
-        frame_data.ambient_light_color[1] = 0.3f;
-        frame_data.ambient_light_color[2] = 0.3f;
+        memcpy(frame_data.camera_forward, renderer.camera.forward, 3 * sizeof(float));
+        frame_data.viewport_size[0] = renderer.window.width;
+        frame_data.viewport_size[1] = renderer.window.height;
 
         glBindBuffer(GL_UNIFORM_BUFFER, renderer.frame_data_ubo);
         glBufferSubData(
@@ -702,12 +702,9 @@ void process_input() {
     // lock rotation to straight vertical and horizontal
 
     // camera-space forward, needed for angle lock and W/S movement later
-    float q_forward[4] = {0, 0, 0, -1};
-    quat_sandwitch(q_forward, q_forward, c->rot);
-    float *camera_forward = q_forward + 1;
 
-    float dot = vec_dot(camera_forward, (float[3]){0, 1.0, 0}, 3);
-    float dot_limit = vec_length(camera_forward, 3) - 0.1 * (M_PI / 180);  // length of camera_forward minus 0.1° marigin
+    float dot = vec_dot(c->forward, (float[3]){0, 1.0, 0}, 3);
+    float dot_limit = vec_length(c->forward, 3) - 0.1 * (M_PI / 180);  // length of camera_forward minus 0.1° marigin
 
     if (dot < dot_limit && glfwGetKey(w->ptr, GLFW_KEY_UP) == GLFW_PRESS) {
         quat_mul(c->rot, q_left, c->rot);
@@ -726,21 +723,22 @@ void process_input() {
         c->pos[1] -= CAMERA_SPEED_VERTICAL;
     }
 
-    camera_forward[1] = 0;  // horizontal component
-    vec_normalize(camera_forward, camera_forward, 3);
-    vec_scale(camera_forward, camera_forward, CAMERA_SPEED_HORIZONTAL, 3);
+    float move_forward[] = {c->forward[0], 0, c->forward[2]};
+
+    vec_normalize(move_forward, move_forward, 3);
+    vec_scale(move_forward, move_forward, CAMERA_SPEED_HORIZONTAL, 3);
 
     if (glfwGetKey(w->ptr, GLFW_KEY_W) == GLFW_PRESS) {
-        vec_add(c->pos, c->pos, camera_forward, 3);
+        vec_add(c->pos, c->pos, move_forward, 3);
     }
     if (glfwGetKey(w->ptr, GLFW_KEY_S) == GLFW_PRESS) {
-        vec_sub(c->pos, c->pos, camera_forward, 3);
+        vec_sub(c->pos, c->pos, move_forward, 3);
     }
 
     float camera_left[3];
-    camera_left[0] = camera_forward[2];
+    camera_left[0] = move_forward[2];
     camera_left[1] = 0;
-    camera_left[2] = -camera_forward[0];
+    camera_left[2] = -move_forward[0];
 
     if (glfwGetKey(w->ptr, GLFW_KEY_A) == GLFW_PRESS) {
         vec_add(c->pos, c->pos, camera_left, 3);
@@ -749,7 +747,7 @@ void process_input() {
         vec_sub(c->pos, c->pos, camera_left, 3);
     }
 
-    camera_build_view(c);
+    camera_build_view_and_forward(c);
 }
 
 int should_close() {

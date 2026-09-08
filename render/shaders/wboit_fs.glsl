@@ -8,25 +8,26 @@ in vec3 frag_pos;
 // For std140 16 byte packing, vec3 is stored as vec4.
 layout(std140, binding = 0) uniform frame_data
 {
-    mat4 view;
-    mat4 proj;
     mat4 view_proj;
     vec4 camera_pos_v4;
-    vec4 light_angle_v4;
-    vec4 direct_light_color_v4;
-    vec4 ambient_light_color_v4;
+    vec4 camera_forward_v4;
+    vec2 viewport_size;
     float time;
 };
 
 uniform vec3 color;
 uniform float alpha;
 
+vec3 light_angle = vec3(0.0f, 1.0f, 0.0f);
+vec3 ambient_light_color = vec3(0.4f, 0.4f, 0.4f);
+vec3 direct_light_color = vec3(1.0f, 1.0f, 1.0f);
+
 void main()
 {
     vec3 view_dir = normalize(frag_pos - camera_pos_v4.xyz);
     vec3 normal = abs(normalize(cross(dFdx(frag_pos), dFdy(frag_pos))));
 
-    float diffuse = max(dot(normal, normalize(light_angle_v4.xyz)), 0.0);
+    float diffuse = max(dot(normal, normalize(light_angle)), 0.0);
     float fresnel = pow(1.0 - abs(dot(normal, view_dir)), 3.0);
 
     float diffuse_mult, fresnel_mult;
@@ -42,7 +43,7 @@ void main()
     }
     fresnel_mult = 0.0f;
 
-    vec3 lit_color = color * (ambient_light_color_v4.rgb + diffuse_mult * diffuse * direct_light_color_v4.rgb);
+    vec3 lit_color = color * (ambient_light_color + diffuse_mult * diffuse * direct_light_color);
 
     // TEMP
 
