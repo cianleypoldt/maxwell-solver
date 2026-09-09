@@ -14,7 +14,7 @@ in vec2 uv;
 void main()
 {
     vec3 background_color = texture(opaque_color, uv).rgb;
-    background_color = vec3(0.0f, 0.0f, 0.0f);
+    // background_color = vec3(0.0f, 0.0f, 0.0f);
 
     vec4 accum = texture(oit_accum, uv);
     float reveal = texture(oit_reveal, uv).r;

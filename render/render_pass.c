@@ -1,4 +1,5 @@
 #include "render_pass.h"
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -6,81 +7,139 @@
 //
 //  Render target
 //
+// Blit to texture when user first binds after modification
+// use framebuffer when texture is not bindable, texture when it is bindable and both when bindable and multisampled
+//
+//
+
+const static render_target_texture_info rt_default_texture_info = {
+    .min_sample_filter = GL_NEAREST,
+    .mag_sample_filter = GL_NEAREST,
+    .wrap_s = GL_CLAMP_TO_EDGE,
+    .wrap_t = GL_CLAMP_TO_EDGE
+};
+
+const static render_target_blend_state rt_default_blend_state = {
+    .src_rgb = GL_ONE,
+    .dst_rgb = GL_ZERO,
+    .src_alpha = GL_ONE,
+    .dst_alpha = GL_ZERO,
+    .equation_rgb = GL_ADD,
+    .equation_alpha = GL_ADD
+};
 
 // TEMP (maybe)
-render_target g_rt_array[MAX_RENDER_TARGETS];
-int g_rt_count = 0;
+static render_target g_rt_array[MAX_RENDER_TARGETS];
+static int g_rt_count = 0;
 
-void make_rt_texture(render_target *rt, int width, int height) {
-    render_target_desc rt_desc = rt->rt_desc;
-
-    glGenTextures(1, &rt->texture);
-    glBindTexture(GL_TEXTURE_2D, rt->texture);
-
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, rt_desc.tex_sample_filter);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, rt_desc.tex_sample_filter);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, rt_desc.tex_sample_wrap);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, rt_desc.tex_sample_wrap);
-
-    glTexStorage2D(GL_TEXTURE_2D, 1, rt_desc.internal_format, width, height);
-
-    // TODO: Check for errors
-
+void rt_make_texture(GLenum *texture, render_target_texture_info info, GLenum internal_format, int width, int height) {
+    glGenTextures(1, texture);
+    glBindTexture(GL_TEXTURE_2D, *texture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, info.min_sample_filter);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, info.mag_sample_filter);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, info.wrap_s);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, info.wrap_t);
+    glTexStorage2D(GL_TEXTURE_2D, 1, internal_format, width, height);
     glBindTexture(GL_TEXTURE_2D, 0);
 }
 
-rt_handle render_target_create(render_target_desc rt_desc, int width, int height) {
-    if (g_rt_count >= MAX_RENDER_TARGETS) return -1;
-    render_target *rt = &g_rt_array[g_rt_count];
+// check for GL_MAX_SAMPLES
+void rt_make_renderbuffer(GLuint *renderbuffer, GLenum internal_format, int sample_count, int width, int height) {
+    glGenRenderbuffers(1, renderbuffer);
+    glBindRenderbuffer(GL_RENDERBUFFER, *renderbuffer);
 
-    memcpy(&rt->rt_desc, &rt_desc, sizeof(render_target_desc));
-    make_rt_texture(&g_rt_array[g_rt_count], width, height);
-    rt->texture_unit_binding = -1;
-    rt->generation = 0;
-    return g_rt_count++;
+    if (sample_count == 1) {
+        glRenderbufferStorage(GL_RENDERBUFFER, internal_format, width, height);
+    } else {
+        glRenderbufferStorageMultisample(GL_RENDERBUFFER, sample_count, internal_format, width, height);
+    }
+    glBindRenderbuffer(GL_RENDERBUFFER, 0);
+}
+
+rt_handle render_target_create(render_target_desc desc) {
+    if (g_rt_count >= MAX_RENDER_TARGETS) return -1;
+
+    render_target rt = {.height = desc.height, .width = desc.width};
+    rt.internal_format = desc.format;
+
+    if (desc.bindeable) rt.has_texture = true;
+    if (desc.sample_count > 1 || !desc.bindeable) rt.has_renderbuffer = true;
+    rt.sample_count = desc.sample_count;
+
+    rt.texture_unit_binding = -1;
+    if (desc.texture_info) {
+        memcpy(&rt.texture_info, desc.texture_info, sizeof(render_target_texture_info));
+    } else {
+        rt.texture_info = rt_default_texture_info;
+    }
+
+    rt.blending_enabled = desc.blending_enabled;
+    if (desc.blend_state) {
+        memcpy(&rt.blend_state, desc.blend_state, sizeof(render_target_blend_state));
+    } else {
+        rt.blend_state = rt_default_blend_state;
+    }
+
+    if (rt.has_renderbuffer) rt_make_renderbuffer(&rt.renderbuffer, rt.internal_format, rt.sample_count, rt.width, rt.height);
+    if (rt.has_texture) rt_make_texture(&rt.texture, rt.texture_info, rt.internal_format, rt.width, rt.height);
+
+    rt.generation = 1;
+
+    rt_handle handle = g_rt_count++;
+    g_rt_array[handle] = rt;
+    return handle;
 }
 
 void render_targets_deinit_all() {
     for (int i = 0; i < g_rt_count; i++) {
-        glDeleteTextures(1, &g_rt_array[i].texture);
-        g_rt_array[i].generation = -1;
+        render_target *rt = &g_rt_array[i];
+        if (rt->has_renderbuffer)
+            glDeleteRenderbuffers(1, &rt->renderbuffer);
+        if (rt->has_texture)
+            glDeleteTextures(1, &g_rt_array[i].texture);
+
+        g_rt_array[i].generation = 0;
     }
     g_rt_count = 0;
 }
 
-// Destroys the old texture, creates a new one with the desired size and increments generation.
-// Any framebuffer references need updating, this is handled be render_pass
 void render_target_resize(rt_handle rth, int width, int height) {
     render_target *rt = render_target_from_handle(rth);
-    if (!rt) return;
-    int binding_slot = -1;
-    if (rt->texture_unit_binding >= 0) {
-        binding_slot = rt->texture_unit_binding;
-        render_target_unbind_texture(rth);
+
+    if (rt->has_renderbuffer) {
+        glDeleteRenderbuffers(0, &rt->renderbuffer);
+        rt_make_renderbuffer(&rt->renderbuffer, rt->internal_format, rt->sample_count, width, height);
     }
-    glDeleteTextures(1, &rt->texture);
-    make_rt_texture(rt, width, height);
-    if (binding_slot >= 0) render_target_bind_texture(rth, binding_slot);
+
+    if (rt->has_texture) {
+        int texture_unit_binding = -1;
+        if (rt->texture_unit_binding >= 0) {
+            texture_unit_binding = rt->texture_unit_binding;
+            render_target_unbind_texture(rth);
+        }
+        glDeleteTextures(1, &rt->texture);
+        rt_make_texture(&rt->texture, rt->texture_info, rt->internal_format, width, height);
+        if (texture_unit_binding >= 0) render_target_bind_texture(rth, texture_unit_binding);
+    }
+
+    rt->width = width;
+    rt->height = height;
     rt->generation++;
 }
 
-void render_target_bind_texture(rt_handle rth, int binding_slot) {
+void render_target_bind_texture(rt_handle rth, int unit) {
     render_target *rt = render_target_from_handle(rth);
-    if (!rt) return;
+    if (!rt || !rt->has_texture) return;
     if (rt->texture_unit_binding >= 0) render_target_unbind_texture(rth);
-    glActiveTexture(GL_TEXTURE0 + binding_slot);
-    glBindTexture(GL_TEXTURE_2D, rt->texture);
-    rt->texture_unit_binding = binding_slot;
-    glActiveTexture(GL_TEXTURE0);
+    glBindTextureUnit(GL_TEXTURE0 + unit, rt->texture);
+    rt->texture_unit_binding = unit;
 }
 
 void render_target_unbind_texture(rt_handle rth) {
     render_target *rt = render_target_from_handle(rth);
-    if (!rt || rt->texture_unit_binding < 0) return;
-    glActiveTexture(GL_TEXTURE0 + rt->texture_unit_binding);
-    glBindTexture(GL_TEXTURE_2D, 0);
+    if (!rt || !rt->has_texture || rt->texture_unit_binding < 0) return;
+    glBindTextureUnit(GL_TEXTURE0 + rt->texture_unit_binding, 0);
     rt->texture_unit_binding = -1;
-    glActiveTexture(GL_TEXTURE0);
 }
 
 int render_target_validate_handle(const rt_handle rth) {
@@ -101,7 +160,7 @@ render_target *render_target_from_handle(const rt_handle rth) {
 // as draw targets to be written to like layout(location = 0) out vec4 color;
 static int rp_framebuffer_rebuild(render_pass *rp) {
     // Framebuffer is either nonexistent or attached to invalid draw buffers and must be recreated
-    if (rp->fbo != 0) glDeleteFramebuffers(1, &rp->fbo);
+    if (rp->fbo > 0) glDeleteFramebuffers(1, &rp->fbo);
 
     glGenFramebuffers(1, &rp->fbo);
     glBindFramebuffer(GL_FRAMEBUFFER, rp->fbo);
@@ -153,7 +212,7 @@ static int ensure_complete_fbo(render_pass *rp) {
     return 0;
 }
 
-int render_pass_init(render_pass *rp, rp_target_desc *targets, int target_count, rp_depth_mode mode) {
+int render_pass_init(render_pass *rp, rp_target_desc *targets, int target_count, render_pass_depth_mode mode) {
     if (!rp || !targets || target_count <= 0)
         *rp = (render_pass){};
 

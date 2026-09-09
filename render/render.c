@@ -358,7 +358,7 @@ int init_renderer(simctx *ctx) {
     }
 
     // render target & pass initialization
-    render_target_desc rtd = {
+    render_target_info rtd = {
         .internal_format = GL_RGBA8,
         .tex_sample_filter = GL_NEAREST,
         .tex_sample_wrap = GL_CLAMP_TO_EDGE,
@@ -601,8 +601,8 @@ static void transparent_pass() {
     glCullFace(GL_FRONT);
     glFrontFace(GL_CCW);
 
-    glUseProgram(renderer.shader_volume);
-    mesh_draw(renderer.unit_cube, GL_TRIANGLES);
+    // glUseProgram(renderer.shader_volume);
+    // mesh_draw(renderer.unit_cube, GL_TRIANGLES);
 
     glDisable(GL_CULL_FACE);
 

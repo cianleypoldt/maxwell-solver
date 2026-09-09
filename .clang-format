@@ -29,7 +29,7 @@ BreakBeforeBinaryOperators: None
 IndentCaseLabels: true
 SpaceBeforeParens: ControlStatements
 SeparateDefinitionBlocks: Always
-AllowShortEnumsOnASingleLine: false
+AllowShortEnumsOnASingleLine: true
 PenaltyBreakBeforeFirstCallParameter: 1000000
 PenaltyReturnTypeOnItsOwnLine: 1000000
 PenaltyExcessCharacter: 1000000

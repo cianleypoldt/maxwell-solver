@@ -75,8 +75,7 @@ float find_entry(vec3 ray_dir) {
     return -1.0f;
 }
 
-// Backface Culling is on, so no need to do it maunually
-void main()
+void main() // requires backface culling!
 {
 
     vec3 ray_dir = normalize(ray_vec);
@@ -90,7 +89,7 @@ void main()
 
     // if (z_backface > z_opaque) discard;
     float t_entry = find_entry(ray_dir);
-    if (t_backface < 10.0f) discard;
+    if (t_opaque < t_entry * 2.0f) discard;
 
     frag_accum = vec4(dot * color.rgb * color.a, color.a);
     frag_reveal = vec4(color.a);
