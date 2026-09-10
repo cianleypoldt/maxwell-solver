@@ -160,6 +160,8 @@ void render_pass_delete(render_pass *rp);
 // binds fbo, clears buffers, sets blending state
 void render_pass_begin(render_pass *rp);
 
+void render_pass_MSAA_downsample(GLenum interp, bool color, bool depth);
+
 // render to screen
 void render_pass_begin_default(GLbitfield mask, float clear_color[4], float clear_depth);
 

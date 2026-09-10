@@ -365,11 +365,11 @@ int init_renderer(simctx *ctx) {
         .wrap_t = GL_CLAMP_TO_EDGE,
     };
 
-    render_target_desc rt_desc = {
+    render_target_desc rt_desc_opaque_color = {
         .width = renderer.window.width,
         .height = renderer.window.height,
         .format = GL_RGB8,
-        .clear_mask = (float[4]){0.0f, 0.0f, 0.0f, 0.0f},
+        .clear_mask = (float[4]){0.0f, 0.0f, 0.0f, 1.0f},
         .sample_count = 0,
         .bindeable = true,
         .blending_enabled = false,
@@ -377,38 +377,64 @@ int init_renderer(simctx *ctx) {
         .texture_info = &default_rt_tex
     };
     // opaque color buffer render target
-    renderer.opaque_color_rt = render_target_create(rt_desc);
+    renderer.opaque_color_rt = render_target_create(rt_desc_opaque_color);
 
     // opaque DEPTH buffer render target
-    memcpy(rt_desc.clear_mask, (float[4]){1.0f, 0.0f, 0.0f, 0.0f}, sizeof(float) * 4);
-    rt_desc.format = GL_DEPTH_COMPONENT24;
-    renderer.global_depth_rt = render_target_create(rt_desc);
+    render_target_desc rt_desc_opaque_depth = {
+        .width = renderer.window.width,
+        .height = renderer.window.height,
+        .format = GL_DEPTH_COMPONENT24,
+        .clear_mask = (float[4]){1.0f, 0.0f, 0.0f, 0.0f},
+        .sample_count = 0,
+        .bindeable = true,
+        .blending_enabled = false,
+        .blend_state = NULL,
+        .texture_info = &default_rt_tex
+    };
+    renderer.global_depth_rt = render_target_create(rt_desc_opaque_depth);
 
     // weighted blended wboit ACCUM buffer render target
-    rt_desc.format = GL_RGBA16F;
-    memcpy(rt_desc.clear_mask, (float[4]){0.0f, 0.0f, 0.0f, 0.0f}, sizeof(float) * 4);
-    rt_desc.blending_enabled = true;
-    render_target_blend_state blend_state = {
-        .src_rgb = GL_ONE,
-        .dst_rgb = GL_ONE,
-        .src_alpha = GL_ONE,
-        .dst_alpha = GL_ONE,
-        .equation_rgb = GL_FUNC_ADD,
-        .equation_alpha = GL_FUNC_ADD,
+    render_target_desc rt_desc_accum = {
+        .width = renderer.window.width,
+        .height = renderer.window.height,
+        .format = GL_RGBA16F,
+        .clear_mask = (float[4]){0.0f, 0.0f, 0.0f, 0.0f},
+        .sample_count = 0,
+        .bindeable = true,
+        .blending_enabled = true,
+        .blend_state = &(render_target_blend_state){
+            .src_rgb = GL_ONE,
+            .dst_rgb = GL_ONE,
+            .src_alpha = GL_ONE,
+            .dst_alpha = GL_ONE,
+            .equation_rgb = GL_FUNC_ADD,
+            .equation_alpha = GL_FUNC_ADD,
+        },
+        .texture_info = &default_rt_tex
     };
-    rt_desc.blend_state = &blend_state;
-    renderer.wboit_accum_rt = render_target_create(rt_desc);
+    renderer.wboit_accum_rt = render_target_create(rt_desc_accum);
 
     // weighted blended wboit REVEAL buffer render target
-    rt_desc.format = GL_R16F;
-    memcpy(rt_desc.clear_mask, (float[4]){1.0f, 0.0f, 0.0f, 0.0f}, sizeof(float) * 4);
-    rt_desc.blend_state->equation_rgb = GL_FUNC_ADD;
-    rt_desc.blend_state->equation_alpha = GL_FUNC_ADD;
-    rt_desc.blend_state->src_rgb = GL_ZERO;
-    rt_desc.blend_state->src_alpha = GL_ZERO;
-    rt_desc.blend_state->dst_rgb = GL_ONE_MINUS_SRC_ALPHA;
-    rt_desc.blend_state->dst_alpha = GL_ONE_MINUS_SRC_ALPHA;
-    renderer.wboit_reveal_rt = render_target_create(rt_desc);
+    render_target_desc rt_desc_reveal = {
+        .width = renderer.window.width,
+        .height = renderer.window.height,
+        .format = GL_R16F,
+        .clear_mask = (float[4]){1.0f, 0.0f, 0.0f, 0.0f},  // changed alpha to 1
+        .sample_count = 0,
+        .bindeable = true,
+        .blending_enabled = true,
+        .blend_state = &(render_target_blend_state){
+            .src_rgb = GL_ZERO,
+            .src_alpha = GL_ZERO,
+            .dst_rgb = GL_ONE_MINUS_SRC_ALPHA,
+            .dst_alpha = GL_ONE_MINUS_SRC_ALPHA,
+            .equation_rgb = GL_FUNC_ADD,
+            .equation_alpha = GL_FUNC_ADD,
+        },
+        .texture_info = &default_rt_tex
+    };
+
+    renderer.wboit_reveal_rt = render_target_create(rt_desc_reveal);
 
     render_pass_target_desc opaque_pass_targets[2] = {
         {.rth = renderer.opaque_color_rt, .attachement_index = 0, .clear_enabled = 1},
@@ -537,18 +563,18 @@ void deinit_renderer() {
 }
 
 static void opaque_pass() {
-    glDepthFunc(GL_LESS);
-
     // OPAQUE PASS
     // writes depth and color, reads none
     render_pass_begin(&renderer.opaque_rp);
 
+    // render_pass_begin_default(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT, (float[4]){}, 1.0f);
+
+    glDepthFunc(GL_LESS);
     glEnable(GL_DEPTH_TEST);
 
     // Volume Borders
     glUseProgram(renderer.shader_wireframe);
     mesh_draw(renderer.unit_cube_wireframe, GL_LINES);
-
     // Sources opaque
     float axis[3] = {4, 4, -1};
     vec_normalize(axis, axis, 3);
@@ -581,11 +607,6 @@ static void transparent_pass() {
     // TRANSPARENT PASS
     // bind and clear accumulation and revealage
     render_pass_begin(&renderer.wboit_rp);
-    const GLfloat clear_accum[4] = {0.0f, 0.0f, 0.0f, 0.0f};
-    const GLfloat clear_reveal[4] = {1.0f, 0.0f, 0.0f, 0.0f};
-    glClearBufferfv(GL_COLOR, 0, clear_accum);
-    glClearBufferfv(GL_COLOR, 1, clear_reveal);
-
     // Read opaque passes depth, do not write.
     glEnable(GL_DEPTH_TEST);
     glDepthMask(GL_FALSE);
@@ -626,8 +647,8 @@ static void transparent_pass() {
     glCullFace(GL_FRONT);
     glFrontFace(GL_CCW);
 
-    // glUseProgram(renderer.shader_volume);
-    // mesh_draw(renderer.unit_cube, GL_TRIANGLES);
+    glUseProgram(renderer.shader_volume);
+    mesh_draw(renderer.unit_cube, GL_TRIANGLES);
 
     glDisable(GL_CULL_FACE);
 
@@ -668,7 +689,6 @@ void render_current() {
     glUniform1i(renderer.uloc_oit_reveal_tex, 4);
 
     mesh_draw(renderer.fullscreen_quad, GL_TRIANGLES);
-
     glfwSwapBuffers(renderer.window.ptr);
 
     return;

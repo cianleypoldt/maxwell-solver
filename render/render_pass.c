@@ -66,6 +66,8 @@ render_target_handle render_target_create(render_target_desc desc) {
     if (desc.sample_count > 1 || !desc.bindeable) rt.has_renderbuffer = true;
     rt.sample_count = desc.sample_count;
 
+    if (desc.clear_mask) memcpy(rt.clear_mask, desc.clear_mask, 4 * sizeof(float));
+
     rt.texture_is_old = true;
     rt.texture_unit_binding = -1;
     if (desc.texture_info) {
@@ -133,18 +135,14 @@ void render_target_bind_texture(render_target_handle rth, int unit) {
     render_target *rt = render_target_from_handle(rth);
     if (!rt || !rt->has_texture) return;
     if (rt->texture_unit_binding >= 0) render_target_unbind_texture(rth);
-    glActiveTexture(GL_TEXTURE0 + unit);
-    glBindTexture(GL_TEXTURE_2D, rt->texture);
-    glActiveTexture(GL_TEXTURE0);
+    glBindTextureUnit(unit, rt->texture);
     rt->texture_unit_binding = unit;
 }
 
 void render_target_unbind_texture(render_target_handle rth) {
     render_target *rt = render_target_from_handle(rth);
     if (!rt || !rt->has_texture || rt->texture_unit_binding < 0) return;
-    glActiveTexture(GL_TEXTURE0 + rt->texture_unit_binding);
-    glBindTexture(GL_TEXTURE_2D, 0);
-    glActiveTexture(GL_TEXTURE0);
+    glBindTextureUnit(rt->texture_unit_binding, 0);
     rt->texture_unit_binding = -1;
 }
 
