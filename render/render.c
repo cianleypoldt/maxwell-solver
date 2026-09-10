@@ -140,19 +140,6 @@ inline static void mesh_draw(const struct mesh m, GLenum mode) {
     glDrawElements(mode, m.index_count, GL_UNSIGNED_INT, NULL);
 }
 
-static void texture_create(GLuint *texture, GLenum int_format, GLenum format, GLenum type, int width, int height, GLenum filter, GLenum clamp, void *ptr) {
-    glGenTextures(1, texture);
-    glBindTexture(GL_TEXTURE_2D, *texture);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, clamp);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, clamp);
-
-    glTexImage2D(GL_TEXTURE_2D, 0, int_format, width, height, 0, format, GL_BYTE, ptr);
-
-    glBindTexture(GL_TEXTURE_2D, 0);
-}
-
 // layout(std140), vec3 handled as vec4 to avoid padding.
 struct frame_data {
     float view_proj[16];
@@ -358,7 +345,7 @@ int init_renderer(simctx *ctx) {
         glBindBuffer(GL_UNIFORM_BUFFER, 0);
     }
 
-    render_target_texture_info default_rt_tex = {
+    texture_sample_info default_rt_tex = {
         .mag_sample_filter = GL_NEAREST,
         .min_sample_filter = GL_NEAREST,
         .wrap_s = GL_CLAMP_TO_EDGE,
@@ -402,7 +389,7 @@ int init_renderer(simctx *ctx) {
         .sample_count = 0,
         .bindeable = true,
         .blending_enabled = true,
-        .blend_state = &(render_target_blend_state){
+        .blend_state = &(blend_state){
             .src_rgb = GL_ONE,
             .dst_rgb = GL_ONE,
             .src_alpha = GL_ONE,
@@ -423,7 +410,7 @@ int init_renderer(simctx *ctx) {
         .sample_count = 0,
         .bindeable = true,
         .blending_enabled = true,
-        .blend_state = &(render_target_blend_state){
+        .blend_state = &(blend_state){
             .src_rgb = GL_ZERO,
             .src_alpha = GL_ZERO,
             .dst_rgb = GL_ONE_MINUS_SRC_ALPHA,
@@ -440,14 +427,14 @@ int init_renderer(simctx *ctx) {
         {.rth = renderer.opaque_color_rt, .attachement_index = 0, .clear_enabled = 1},
         {.rth = renderer.global_depth_rt, .attachement_index = INVALID_BIND_POINT, .clear_enabled = 1}
     };
-    render_pass_init(&renderer.opaque_rp, opaque_pass_targets, 2, DEPTH);
+    framebuffer_init(&renderer.opaque_rp, opaque_pass_targets, 2, DEPTH);
 
     render_pass_target_desc wboit_pass_targets[3] = {
         {.rth = renderer.wboit_accum_rt, .attachement_index = 0, .clear_enabled = 1},
         {.rth = renderer.wboit_reveal_rt, .attachement_index = 1, .clear_enabled = 1},
         {.rth = renderer.global_depth_rt, .attachement_index = INVALID_BIND_POINT, .clear_enabled = 0}
     };
-    render_pass_init(&renderer.wboit_rp, wboit_pass_targets, 3, DEPTH);
+    framebuffer_init(&renderer.wboit_rp, wboit_pass_targets, 3, DEPTH);
 
     // Meshes
     mesh_create(&renderer.fullscreen_quad, QUAD_VERTS, ARRAY_COUNT(QUAD_VERTS), QUAD_INDICES, ARRAY_COUNT(QUAD_INDICES), POS, 3);
@@ -491,24 +478,16 @@ int init_renderer(simctx *ctx) {
 
     // Pathtracer init
     {
-        glActiveTexture(GL_TEXTURE0 + 0);
-        glBindTexture(GL_TEXTURE_3D, renderer.Etex);
-        glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
-        glTexImage3D(GL_TEXTURE_3D, 0, GL_R32F, renderer.field->Nz, renderer.field->Ny, renderer.field->Nx, 0, GL_RED, GL_FLOAT, NULL);
+        texture_sample_info sample_info = {};
+        sample_info.min_sample_filter = sample_info.mag_sample_filter = GL_NEAREST;
+        sample_info.wrap_s = sample_info.wrap_t = sample_info.wrap_r = GL_CLAMP_TO_EDGE;
+        texture_create_3d_fixed_size(&renderer.Etex, GL_R32F, sample_info, renderer.field->Nz, renderer.field->Ny, renderer.field->Nx);
+        glBindTextureUnit(renderer.Etex, 0);
+        texture_create_3d_fixed_size(&renderer.Btex, GL_R32F, sample_info, renderer.field->Nz, renderer.field->Ny, renderer.field->Nx);
+        glBindTextureUnit(renderer.Btex, 1);
+    }
 
-        glActiveTexture(GL_TEXTURE0 + 1);
-        glBindTexture(GL_TEXTURE_3D, renderer.Btex);
-        glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
-        glTexImage3D(GL_TEXTURE_3D, 0, GL_R32F, renderer.field->Nz, renderer.field->Ny, renderer.field->Nx, 0, GL_RED, GL_FLOAT, NULL);
-
+    {
         float model[16] = {0};
         model[MAT_IDX(0, 0, 4, 4)] = get_em_field_width(renderer.field);
         model[MAT_IDX(1, 1, 4, 4)] = get_em_field_height(renderer.field);
@@ -550,8 +529,8 @@ void deinit_renderer() {
     glDeleteProgram(renderer.shader_volume);
     glDeleteProgram(renderer.shader_composite);
 
-    glDeleteTextures(1, &renderer.Etex);
-    glDeleteTextures(1, &renderer.Btex);
+    texture_destroy(renderer.Etex);
+    texture_destroy(renderer.Btex);
 
     render_pass_delete(&renderer.opaque_rp);
     render_pass_delete(&renderer.wboit_rp);

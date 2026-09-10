@@ -1,8 +1,74 @@
 #include "render_pass.h"
+#include <H5Cpublic.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+// Either have textures be separate object from rendertargets, and writing some dupe code and having bad interoperability,
+// or have one texture base object that handles everything, but that will be super complex and annoying, and requires a million args and a lot of memory
+// There need to be a render pass system that abstracts clearing and blending, and more in the future, since this is the most annoying part of opengl right now
+// and most of it is per render target and rarely needs to be mutated, which should make it simple to abstract.
+//
+// THe render target and fbo class may be tightly coupled. Both need to handle MSAA, and bliting multisampled renderbuffers to textures. THis requires two FBOs
+//
+// Thoughts: The render pass has one FBO that draws to the render_targets renderbuffer if present, or alternatively it's texture.
+// Blitting happens via another object the user creates for this specific putpose, that has two FBOs. Much code will be sharable between the blit group and the
+// render pass object. THis is why it would be smart to create a fbo abstraction that handles rebuilding, binding, e.c., while the render pass can take care of
+// blending, clearing, e.c.
+
+void texture_create_2d_fixed_size(GLenum *name, GLenum format, texture_sample_info sample_info, int width, int height) {
+    glGenTextures(1, name);
+    glBindTexture(GL_TEXTURE_2D, *name);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, sample_info.min_sample_filter);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, sample_info.mag_sample_filter);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, sample_info.wrap_s);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, sample_info.wrap_t);
+    glTexStorage2D(GL_TEXTURE_2D, 1, format, width, height);
+
+    glBindTexture(GL_TEXTURE_2D, 0);
+}
+
+void texture_create_3d_fixed_size(GLenum *name, GLenum format, texture_sample_info sample_info, int width, int height, int depth) {
+    glGenTextures(1, name);
+    glBindTexture(GL_TEXTURE_3D, *name);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, sample_info.min_sample_filter);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, sample_info.mag_sample_filter);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, sample_info.wrap_s);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, sample_info.wrap_t);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, sample_info.wrap_r);
+    glTexStorage3D(GL_TEXTURE_3D, 0, format, width, height, depth);
+    glBindTexture(GL_TEXTURE_3D, 0);
+}
+
+void texture_destroy(texture2d *textrue) {
+    glDeleteTextures(1, &textrue->name);
+}
+
+void renderbuffer_resize() {
+}
+
+blend_info blend_state_joined(blend_info_joined info) {
+    return (blend_info){
+        .blending_enabled = true,
+        .is_separate = false,
+        .joined = info
+    };
+}
+
+blend_info blend_state_separate(blend_info_separate info) {
+    return (blend_info){
+        .blending_enabled = true,
+        .is_separate = true,
+        .separate = info
+    };
+}
+
+blend_info blend_state_disable_blending() {
+    return (blend_info){
+        .blending_enabled = false
+    };
+}
 
 //
 //  Render target
@@ -10,16 +76,15 @@
 // Blit to texture when user first binds after modification
 // use framebuffer when texture is not bindable, texture when it is bindable and both when bindable and multisampled
 //
-//
 
-const static render_target_texture_info rt_default_texture_info = {
+const static texture_sample_info rt_default_texture_info = {
     .min_sample_filter = GL_NEAREST,
     .mag_sample_filter = GL_NEAREST,
     .wrap_s = GL_CLAMP_TO_EDGE,
     .wrap_t = GL_CLAMP_TO_EDGE
 };
 
-const static render_target_blend_state rt_default_blend_state = {
+const static blend_info rt_default_blend_state = {
     .src_rgb = GL_ONE,
     .dst_rgb = GL_ZERO,
     .src_alpha = GL_ONE,
@@ -32,7 +97,7 @@ const static render_target_blend_state rt_default_blend_state = {
 static render_target g_rt_array[MAX_RENDER_TARGETS];
 static int g_rt_count = 0;
 
-static void rt_make_texture(GLenum *texture, render_target_texture_info info, GLenum internal_format, int width, int height) {
+static void rt_make_texture(GLenum *texture, texture_sample_info info, GLenum internal_format, int width, int height) {
     glGenTextures(1, texture);
     glBindTexture(GL_TEXTURE_2D, *texture);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, info.min_sample_filter);
@@ -56,6 +121,24 @@ static void rt_make_renderbuffer(GLuint *renderbuffer, GLenum internal_format, i
     glBindRenderbuffer(GL_RENDERBUFFER, 0);
 }
 
+static render_target g_fba_array[MAX_RENDER_TARGETS];
+static int g_fba_count = 0;
+
+render_target_handle framebuffer_attachement_create_texture2d(GLenum format, texture_sample_info sample_info, int width, int height) {
+    render_target *fba = &g_fba_array[g_fba_count];
+    fba->is_renderbuffer = false;
+    fba->generation = 0;
+    fba->texture = texture_create_2d_fixed_size(&fba->texture.name, format, sample_info, width, height);
+
+    return g_fba_count++;
+}
+
+render_target_handle framebuffer_attachement_create_renderbuffer2d(GLenum format, texture_sample_info sample_info, int sample_count, int width, int height) {
+    render_target *fba = &g_fba_array[g_fba_count];
+
+    renderbuffer_create_2d_multisample(, GLenum format, int sample_count, int width, int height)
+}
+
 render_target_handle render_target_create(render_target_desc desc) {
     if (g_rt_count >= MAX_RENDER_TARGETS) return -1;
 
@@ -68,17 +151,16 @@ render_target_handle render_target_create(render_target_desc desc) {
 
     if (desc.clear_mask) memcpy(rt.clear_mask, desc.clear_mask, 4 * sizeof(float));
 
-    rt.texture_is_old = true;
     rt.texture_unit_binding = -1;
     if (desc.texture_info) {
-        memcpy(&rt.texture_info, desc.texture_info, sizeof(render_target_texture_info));
+        memcpy(&rt.texture_info, desc.texture_info, sizeof(texture_sample_info));
     } else {
         rt.texture_info = rt_default_texture_info;
     }
 
     rt.blending_enabled = desc.blending_enabled;
     if (desc.blend_state) {
-        memcpy(&rt.blend_state, desc.blend_state, sizeof(render_target_blend_state));
+        memcpy(&rt.blend_state, desc.blend_state, sizeof(blend_info));
     } else {
         rt.blend_state = rt_default_blend_state;
     }
@@ -146,14 +228,18 @@ void render_target_unbind_texture(render_target_handle rth) {
     rt->texture_unit_binding = -1;
 }
 
-int render_target_validate_handle(const render_target_handle rth) {
+int render_target_handle_state(const render_target_handle rth) {
     return rth >= 0 && rth < g_rt_count && g_rt_array[rth].generation >= 0;
 }
 
 render_target *render_target_from_handle(const render_target_handle rth) {
-    if (!render_target_validate_handle(rth)) return NULL;
+    if (!render_target_handle_state(rth)) return NULL;
     return &g_rt_array[rth];
 }
+
+//
+// Framebuffer
+//
 
 //
 //  Render pass
@@ -161,38 +247,40 @@ render_target *render_target_from_handle(const render_target_handle rth) {
 
 // attaches textures to fbo at correct bindpoints and specifies all of the renderpasses target's bindpoints
 // as draw targets to be written to like layout(location = 0) out vec4 color;
-static int rp_framebuffer_rebuild(render_pass *rp) {
-    // Framebuffer is either nonexistent or attached to invalid draw buffers and must be recreated
-    if (rp->fbo > 0) glDeleteFramebuffers(1, &rp->fbo);
-
-    glGenFramebuffers(1, &rp->fbo);
-    glBindFramebuffer(GL_FRAMEBUFFER, rp->fbo);
+static int fbo_rebuild(framebuffer *fb) {
+    if (fb->fbo > 0) glDeleteFramebuffers(1, &fb->fbo);
+    glGenFramebuffers(1, &fb->fbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, fb->fbo);
 
     // Set up draw buffers array and bind to FBO color attachement
-    GLenum *draw_buffers = malloc(rp->colored_target_count * sizeof(GLenum));
+    GLenum *draw_buffers = malloc(fb->color_target_count * sizeof(GLenum));
 
-    for (int i = 0; i < rp->colored_target_count; i++) {
-        render_target *rt = render_target_from_handle(rp->colored_handles[i].rth);
+    for (int i = 0; i < fb->color_target_count; i++) {
+        render_target *rt = render_target_from_handle(fb->color_targets[i].handle);
         if (!rt) goto error;
-        draw_buffers[i] = GL_COLOR_ATTACHMENT0 + rp->colored_handles[i].attachement_index;
+
+        draw_buffers[i] = GL_COLOR_ATTACHMENT0 + fb->color_targets[i].attachement_index;
         if (rt->has_renderbuffer)
             glFramebufferRenderbuffer(GL_FRAMEBUFFER, draw_buffers[i], GL_RENDERBUFFER, rt->renderbuffer);
         else
             glFramebufferTexture2D(GL_FRAMEBUFFER, draw_buffers[i], GL_TEXTURE_2D, rt->texture, 0);
-        rp->colored_handles[i].generation = rt->generation;
-    }
-    glDrawBuffers(rp->colored_target_count, draw_buffers);
 
-    if (rp->depth_mode == DEPTH) {
-        render_target *rt = render_target_from_handle(rp->depth_target.rth);
+        fb->color_targets[i].generation = rt->generation;
+    }
+    glDrawBuffers(fb->color_target_count, draw_buffers);
+
+    if (fb->has_depth) {
+        render_target *rt = render_target_from_handle(fb->depth_target.handle);
         if (!rt) goto error;
 
         if (rt->has_renderbuffer)
             glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, rt->renderbuffer);
         else
             glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, rt->texture, 0);
-        rp->depth_target.generation = rt->generation;
+        fb->depth_target.generation = rt->generation;
     }
+
+    // Stencil!
 
     if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) goto error;
 
@@ -202,26 +290,29 @@ static int rp_framebuffer_rebuild(render_pass *rp) {
     return 0;
 
 error:
-    glDeleteFramebuffers(1, &rp->fbo);
+    glDeleteFramebuffers(1, &fb->fbo);
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     free(draw_buffers);
     return -1;
 }
 
-static int ensure_complete_fbo(render_pass *rp) {
-    for (int i = 0; i < rp->colored_target_count; i++) {
-        if (rp->colored_handles[i].generation != render_target_from_handle(rp->colored_handles[i].rth)->generation) {
-            if (rp_framebuffer_rebuild(rp) >= 0)
+static int ensure_complete_fbo(framebuffer *fb) {
+    for (int i = 0; i < fb->color_target_count; i++) {
+        if (fb->color_targets[i].generation != render_target_from_handle(fb->color_targets[i].handle)->generation) {
+            if (fbo_rebuild(fb) >= 0)
                 return 0;
             return -1;
         }
     }
-    if (rp->depth_target.generation != render_target_from_handle(rp->depth_target.rth)->generation)
-        if (rp_framebuffer_rebuild(rp) < 0) return -1;
+    if (fb->depth_target.generation != render_target_from_handle(fb->depth_target.handle)->generation)
+        if (fbo_rebuild(fb) < 0) return -1;
+
+    // Stencil!
+
     return 0;
 }
 
-int render_pass_init(render_pass *rp, render_pass_target_desc *targets, int target_count, render_pass_depth_mode mode) {
+int framebuffer_init(framebuffer *fb, render_pass_target_desc *targets, int target_count, render_pass_depth_mode mode) {
     *rp = (render_pass){};
     if (!rp || !targets || target_count <= 0) return -1;
 
