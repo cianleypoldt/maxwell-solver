@@ -8,6 +8,7 @@
 #include <H5Lpublic.h>
 #include <complex.h>
 #include <math.h>
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -185,8 +186,8 @@ struct renderctx {
     GLuint frame_data_ubo;
     struct frame_data frame_data;
 
-    rt_handle opaque_color_rt, global_depth_rt;
-    rt_handle wboit_accum_rt, wboit_reveal_rt;
+    render_target_handle opaque_color_rt, global_depth_rt;
+    render_target_handle wboit_accum_rt, wboit_reveal_rt;
 
     render_pass opaque_rp, wboit_rp;
 
@@ -357,42 +358,65 @@ int init_renderer(simctx *ctx) {
         glBindBuffer(GL_UNIFORM_BUFFER, 0);
     }
 
-    // render target & pass initialization
-    render_target_info rtd = {
-        .internal_format = GL_RGBA8,
-        .tex_sample_filter = GL_NEAREST,
-        .tex_sample_wrap = GL_CLAMP_TO_EDGE,
-        .clear_mask = {0, 0, 0, 0.0f},
-        .enable_blending = 0
+    render_target_texture_info default_rt_tex = {
+        .mag_sample_filter = GL_NEAREST,
+        .min_sample_filter = GL_NEAREST,
+        .wrap_s = GL_CLAMP_TO_EDGE,
+        .wrap_t = GL_CLAMP_TO_EDGE,
     };
-    renderer.opaque_color_rt = render_target_create(rtd, renderer.window.width, renderer.window.height);
 
-    memcpy(rtd.clear_mask, (float[4]){1.0f, 0.0f, 0.0f, 0.0f}, sizeof(float) * 4);
-    rtd.internal_format = GL_DEPTH_COMPONENT24;
-    renderer.global_depth_rt = render_target_create(rtd, renderer.window.width, renderer.window.height);
+    render_target_desc rt_desc = {
+        .width = renderer.window.width,
+        .height = renderer.window.height,
+        .format = GL_RGB8,
+        .clear_mask = (float[4]){0.0f, 0.0f, 0.0f, 0.0f},
+        .sample_count = 0,
+        .bindeable = true,
+        .blending_enabled = false,
+        .blend_state = NULL,
+        .texture_info = &default_rt_tex
+    };
+    // opaque color buffer render target
+    renderer.opaque_color_rt = render_target_create(rt_desc);
 
-    rtd.enable_blending = 1;
-    rtd.blend_equation = GL_FUNC_ADD;
-    rtd.blendfunc_src = GL_ONE;
-    rtd.blendfunc_dest = GL_ONE;
-    rtd.internal_format = GL_RGBA16F;
-    memcpy(rtd.clear_mask, (float[4]){0.0f, 0.0f, 0.0f, 0.0f}, sizeof(float) * 4);
-    renderer.wboit_accum_rt = render_target_create(rtd, renderer.window.width, renderer.window.height);
+    // opaque DEPTH buffer render target
+    memcpy(rt_desc.clear_mask, (float[4]){1.0f, 0.0f, 0.0f, 0.0f}, sizeof(float) * 4);
+    rt_desc.format = GL_DEPTH_COMPONENT24;
+    renderer.global_depth_rt = render_target_create(rt_desc);
 
-    rtd.blend_equation = GL_FUNC_ADD;
-    rtd.blendfunc_src = GL_ZERO;
-    rtd.blendfunc_dest = GL_ONE_MINUS_SRC_ALPHA;
-    rtd.internal_format = GL_R16F;
-    memcpy(rtd.clear_mask, (float[4]){1.0f, 0.0f, 0.0f, 0.0f}, sizeof(float) * 4);
-    renderer.wboit_reveal_rt = render_target_create(rtd, renderer.window.width, renderer.window.height);
+    // weighted blended wboit ACCUM buffer render target
+    rt_desc.format = GL_RGBA16F;
+    memcpy(rt_desc.clear_mask, (float[4]){0.0f, 0.0f, 0.0f, 0.0f}, sizeof(float) * 4);
+    rt_desc.blending_enabled = true;
+    render_target_blend_state blend_state = {
+        .src_rgb = GL_ONE,
+        .dst_rgb = GL_ONE,
+        .src_alpha = GL_ONE,
+        .dst_alpha = GL_ONE,
+        .equation_rgb = GL_FUNC_ADD,
+        .equation_alpha = GL_FUNC_ADD,
+    };
+    rt_desc.blend_state = &blend_state;
+    renderer.wboit_accum_rt = render_target_create(rt_desc);
 
-    rp_target_desc opaque_pass_targets[2] = {
+    // weighted blended wboit REVEAL buffer render target
+    rt_desc.format = GL_R16F;
+    memcpy(rt_desc.clear_mask, (float[4]){1.0f, 0.0f, 0.0f, 0.0f}, sizeof(float) * 4);
+    rt_desc.blend_state->equation_rgb = GL_FUNC_ADD;
+    rt_desc.blend_state->equation_alpha = GL_FUNC_ADD;
+    rt_desc.blend_state->src_rgb = GL_ZERO;
+    rt_desc.blend_state->src_alpha = GL_ZERO;
+    rt_desc.blend_state->dst_rgb = GL_ONE_MINUS_SRC_ALPHA;
+    rt_desc.blend_state->dst_alpha = GL_ONE_MINUS_SRC_ALPHA;
+    renderer.wboit_reveal_rt = render_target_create(rt_desc);
+
+    render_pass_target_desc opaque_pass_targets[2] = {
         {.rth = renderer.opaque_color_rt, .attachement_index = 0, .clear_enabled = 1},
         {.rth = renderer.global_depth_rt, .attachement_index = INVALID_BIND_POINT, .clear_enabled = 1}
     };
     render_pass_init(&renderer.opaque_rp, opaque_pass_targets, 2, DEPTH);
 
-    rp_target_desc wboit_pass_targets[3] = {
+    render_pass_target_desc wboit_pass_targets[3] = {
         {.rth = renderer.wboit_accum_rt, .attachement_index = 0, .clear_enabled = 1},
         {.rth = renderer.wboit_reveal_rt, .attachement_index = 1, .clear_enabled = 1},
         {.rth = renderer.global_depth_rt, .attachement_index = INVALID_BIND_POINT, .clear_enabled = 0}
@@ -471,6 +495,7 @@ int init_renderer(simctx *ctx) {
         glUniform1i(glGetUniformLocation(renderer.shader_volume, "Btex"), 1);
         render_target_bind_texture(renderer.global_depth_rt, 5);
         glUniform1i(glGetUniformLocation(renderer.shader_volume, "depth_tex"), 5);
+        printf("GL init error (uniform): %x\n", glGetError());
         glUniform1f(glGetUniformLocation(renderer.shader_volume, "near"), renderer.camera.near_plane);
         glUniform1f(glGetUniformLocation(renderer.shader_volume, "far"), renderer.camera.far_plane);
         renderer.magnitude_buffer = malloc(get_em_field_cell_count(renderer.field) * sizeof(float));
@@ -645,6 +670,7 @@ void render_current() {
     mesh_draw(renderer.fullscreen_quad, GL_TRIANGLES);
 
     glfwSwapBuffers(renderer.window.ptr);
+
     return;
 }
 

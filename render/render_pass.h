@@ -5,7 +5,7 @@
 #include <stdbool.h>
 
 #define MAX_RENDER_TARGETS 32
-typedef int rt_handle;
+typedef int render_target_handle;
 #define RT_INVALID_HANDLE -1
 
 typedef struct {
@@ -26,15 +26,17 @@ typedef struct {
 
 typedef struct {
     GLenum internal_format;
+    float clear_mask[4];
     int sample_count;
 
     bool blending_enabled;
     bool has_texture;
     int texture_unit_binding;
     bool has_renderbuffer;
+    bool texture_is_old;  // Must be set when fbo draws to render target, or the texture will bot be blit to when bound
 
     render_target_blend_state blend_state;
-    render_target_texture_info texture_info;  // never multisample
+    render_target_texture_info texture_info;  // textures are never multisampled
 
     int generation;
     int width, height;
@@ -45,6 +47,7 @@ typedef struct {
 typedef struct {
     int width, height;
     GLenum format;
+    float *clear_mask;
     int sample_count;
     bool bindeable;
     bool blending_enabled;
@@ -53,22 +56,22 @@ typedef struct {
     render_target_texture_info *texture_info;
 } render_target_desc;
 
-rt_handle render_target_create(render_target_desc desc);
+render_target_handle render_target_create(render_target_desc desc);
 void render_targets_deinit_all();  // no individual deletion, fine for small scope renderer
 
-void render_target_resize(const rt_handle rth, int width, int height);
-void render_target_bind_texture(const rt_handle rth, int binding_slot);
-void render_target_unbind_texture(const rt_handle rth);
+void render_target_resize(const render_target_handle rth, int width, int height);
+void render_target_bind_texture(const render_target_handle rth, int binding_slot);
+void render_target_unbind_texture(const render_target_handle rth);
 
-int render_target_validate_handle(const rt_handle rth);
-render_target *render_target_from_handle(const rt_handle rth);
+int render_target_validate_handle(const render_target_handle rth);
+render_target *render_target_from_handle(const render_target_handle rth);
 
 typedef enum { NO_DEPTH,
                DEPTH
                // TODO: add stencil
 } render_pass_depth_mode;
 
-/* TODO: render_pass applies OpenGL state
+/* TODO: general OpenGL state management
 typedef struct {
     // Depth
     int enable_depth_test;
@@ -127,7 +130,7 @@ typedef struct {
     int generation;
     int clear_enabled;
     int attachement_index;
-    rt_handle rth;
+    render_target_handle rth;
 } rp_internal_target_handle;
 
 #define MAX_COLOR_TARGETS_PER_RENDER_PASS 24
@@ -143,14 +146,14 @@ typedef struct {
 typedef struct {
     int attachement_index;
     int clear_enabled;
-    rt_handle rth;
-} rp_target_desc;
+    render_target_handle rth;
+} render_pass_target_desc;
 
-// *targets is an array of target descriptions of length target_count. If depth_mode == DEPTH, the last item must be the depth buffer description.
+// *targets is a pointer to an array of target descriptions of length target_count. If depth_mode == DEPTH, the last item must be the depth buffer description.
 // Shaders can write to the render_target's texture using the syntax layout(location = 0) out vec4 color when it is bound
 // targets[i].attachement_index defines the location
 // Since the depth buffer cannot have an attachement index, set targets[target_count - 1].bind_point to INVALID_BIND_POINT
-int render_pass_init(render_pass *rp, rp_target_desc *targets, int target_count, render_pass_depth_mode depth_mode);
+int render_pass_init(render_pass *rp, render_pass_target_desc *targets, int target_count, render_pass_depth_mode depth_mode);
 
 void render_pass_delete(render_pass *rp);
 
