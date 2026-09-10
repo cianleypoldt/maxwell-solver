@@ -14,10 +14,11 @@ typedef struct {
 
 typedef struct {
     GLenum format;
-    texture_sample_info wrap_info;
+    texture_sample_info sample_info;
 
     int texture_unit_binding;
     int generation;
+    int width, height;
     GLuint name;
 } texture2d;
 
@@ -59,16 +60,23 @@ blend_info blend_state_separate(blend_info_separate info);
 blend_info blend_state_disable_blending();
 
 typedef struct {
-    int generation;
+    int last_GL_object_generation;
     int idx;
 } render_target_handle;
+
+typedef enum {
+    STORAGE_TYPE_TEXTURE,
+    STORAGE_TYPE_TEXTURE_HANDLE,
+    STORAGE_TYPE_RENDERBUFFER
+} render_target_storage_type;
 
 typedef struct {
     float clear_mask[4];
     blend_info blend_state;
 
-    int generation;
-    bool is_renderbuffer;
+    render_target_storage_type storage_type;
+
+    int GL_object_generation;
 
     union {
         struct {
@@ -79,16 +87,19 @@ typedef struct {
         } renderbuffer;
 
         texture2d texture;
+
+        texture_handle texture_handle;
     };
 } render_target;
 
 #define MAX_RENDER_TARGETS 32
 
 render_target_handle render_target_create_texture2d(GLenum format, texture_sample_info sample_info, int width, int height);
-render_target_handle render_target_create_renderbuffer2d(GLenum format, texture_sample_info sample_info, int sample_count, int width, int height);
+// render_target_handle render_target_create_with_texture_handle(texture_handle texture_handle);
+render_target_handle render_target_create_renderbuffer2d(GLenum format, int sample_count, int width, int height);
 
-void render_target_destroy(render_target_handle handle);
-void render_target_destroy_all();
+void render_target_delete(render_target_handle handle);
+void render_target_delete_all();
 
 void render_target_set_clear_mask(render_target_handle handle, float clear_mask[4]);
 void render_target_set_blend_state(render_target_handle handle, blend_info state);
@@ -103,80 +114,22 @@ typedef enum {
 render_target_state render_target_handle_state(const render_target_handle rth);
 render_target *render_target_from_handle(const render_target_handle rth);
 
-typedef enum { NONE,
-               DEPTH,
-               // STENCIL -unsupported
-} render_pass_depth_mode;
-
-/* TODO: general OpenGL state management
-typedef struct {
-    // Depth
-    int enable_depth_test;
-    int enable_depth_mask;
-    GLenum depth_func;
-
-    // Face culling
-    int enable_cull_face;
-    GLenum cull_face;
-    GLenum front_face;
-
-    // Blending
-
-    // Color writes
-    int color_mask_r;
-    int color_mask_g;
-    int color_mask_b;
-    int color_mask_a;
-
-    // Stencil
-    int enable_stencil_test;
-    GLenum stencil_func;
-    GLint stencil_ref;
-    GLuint stencil_read_mask;
-    GLenum stencil_fail;
-    GLenum stencil_zfail;
-    GLenum stencil_zpass;
-    GLuint stencil_write_mask;
-
-    // Polygon
-    GLenum polygon_mode;
-    float polygon_offset_factor;
-    float polygon_offset_units;
-    int enable_polygon_offset;
-
-    // Multisampling
-    int enable_multisample;
-
-    // Scissor
-    int enable_scissor;
-    int scissor_x;
-    int scissor_y;
-    int scissor_width;
-    int scissor_height;
-
-    int viewport_x;
-    int viewport_y;
-    int viewport_width;
-    int viewport_height;
-} GL_state;
-*/
-
 #define INVALID_ATTACHEMENT_INDEX -1
 
 typedef struct {
     int attachement_index;
     render_target_handle handle;
-} rt_internal_handle;
+} framebuffer_attachement_handle;
 
-#define MAX_COLOR_TARGETS_PER_FB 24
+#define FRAMEBUFFER_MAX_COLOR_TARGETS 24
 
 typedef struct {
     bool has_color, has_depth, has_stencil;
 
     int color_target_count;
-    rt_internal_handle color_targets[MAX_COLOR_TARGETS_PER_FB];
-    rt_internal_handle depth_target;
-    rt_internal_handle stencil_target;
+    framebuffer_attachement_handle color_targets[FRAMEBUFFER_MAX_COLOR_TARGETS];
+    framebuffer_attachement_handle depth_target;
+    framebuffer_attachement_handle stencil_target;
 
     int sample_count;
     int width, height;
@@ -191,7 +144,7 @@ typedef struct {
     int sample_count;
 
     framebuffer fb;
-    bool clear_enabled[MAX_COLOR_TARGETS_PER_FB + 2];
+    bool clear_enabled[FRAMEBUFFER_MAX_COLOR_TARGETS + 2];  // color[i], depth, stencil
 } render_pass;
 
 typedef struct {
@@ -204,7 +157,7 @@ typedef struct {
 // Shaders can write to the render_target's texture using the syntax layout(location = 0) out vec4 color when it is bound
 // targets[i].attachement_index defines the location
 // Since the depth buffer cannot have an attachement index, set targets[target_count - 1].bind_point to INVALID_BIND_POINT
-int framebuffer_init(framebuffer *fb, render_pass_target_desc *targets, int target_count, render_pass_depth_mode depth_mode);
+int framebuffer_init(framebuffer *fb, render_pass_target_desc *targets, int target_count);
 
 void render_pass_delete(render_pass *rp);
 

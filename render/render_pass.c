@@ -1,5 +1,7 @@
 #include "render_pass.h"
+#include "common/debug.h"
 #include <H5Cpublic.h>
+#include <assert.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -94,19 +96,6 @@ const static blend_info rt_default_blend_state = {
 };
 
 // TEMP (maybe)
-static render_target g_rt_array[MAX_RENDER_TARGETS];
-static int g_rt_count = 0;
-
-static void rt_make_texture(GLenum *texture, texture_sample_info info, GLenum internal_format, int width, int height) {
-    glGenTextures(1, texture);
-    glBindTexture(GL_TEXTURE_2D, *texture);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, info.min_sample_filter);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, info.mag_sample_filter);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, info.wrap_s);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, info.wrap_t);
-    glTexStorage2D(GL_TEXTURE_2D, 1, internal_format, width, height);
-    glBindTexture(GL_TEXTURE_2D, 0);
-}
 
 // check for GL_MAX_SAMPLES
 static void rt_make_renderbuffer(GLuint *renderbuffer, GLenum internal_format, int sample_count, int width, int height) {
@@ -121,120 +110,126 @@ static void rt_make_renderbuffer(GLuint *renderbuffer, GLenum internal_format, i
     glBindRenderbuffer(GL_RENDERBUFFER, 0);
 }
 
-static render_target g_fba_array[MAX_RENDER_TARGETS];
-static int g_fba_count = 0;
+static render_target g_rt_array[MAX_RENDER_TARGETS];
+static int g_rt_top = 0;
 
-render_target_handle framebuffer_attachement_create_texture2d(GLenum format, texture_sample_info sample_info, int width, int height) {
-    render_target *fba = &g_fba_array[g_fba_count];
-    fba->is_renderbuffer = false;
-    fba->generation = 0;
-    fba->texture = texture_create_2d_fixed_size(&fba->texture.name, format, sample_info, width, height);
+render_target_handle render_target_create_texture2d(GLenum format, texture_sample_info sample_info, int width, int height) {
+    GLuint name;
+    texture_create_2d_fixed_size(&name, format, sample_info, width, height);
 
-    return g_fba_count++;
+    render_target rt = {
+        .blend_state = blend_state_disable_blending(),
+        .clear_mask = {0.0f, 0.0f, 0.0f, 0.0f},
+        .storage_type = STORAGE_TYPE_TEXTURE,
+        .texture = {
+            .format = format,
+            .texture_unit_binding = -1,
+            .generation = 0,
+            .sample_info = sample_info,
+            .width = width,
+            .height = height,
+            .name = name
+        },
+        .GL_object_generation = 0
+    };
+
+    g_rt_array[g_rt_top] = rt;
+    return (render_target_handle){.last_GL_object_generation = 0, .idx = g_rt_top++};
 }
 
-render_target_handle framebuffer_attachement_create_renderbuffer2d(GLenum format, texture_sample_info sample_info, int sample_count, int width, int height) {
-    render_target *fba = &g_fba_array[g_fba_count];
+render_target_handle render_target_create_renderbuffer2d(GLenum format, int sample_count, int width, int height) {
+    GLuint name;
+    rt_make_renderbuffer(&name, format, sample_count, width, height);
 
-    renderbuffer_create_2d_multisample(, GLenum format, int sample_count, int width, int height)
+    render_target rt = {
+        .blend_state = blend_state_disable_blending(),
+        .clear_mask = {0.0f, 0.0f, 0.0f, 0.0f},
+        .storage_type = STORAGE_TYPE_RENDERBUFFER,
+        .renderbuffer = {
+            .format = format,
+            .sample_count = sample_count,
+            .width = width,
+            .height = height,
+            .name = name,
+        },
+        .GL_object_generation = 0
+    };
+
+    g_rt_array[g_rt_top] = rt;
+    return (render_target_handle){.last_GL_object_generation = 0, .idx = g_rt_top++};
 }
 
-render_target_handle render_target_create(render_target_desc desc) {
-    if (g_rt_count >= MAX_RENDER_TARGETS) return -1;
+void render_target_delete(render_target_handle handle) {
+    render_target *rt = render_target_from_handle(handle);
+    ASSERT(rt);
+    if (rt->GL_object_generation < 0) return;
 
-    render_target rt = {.height = desc.height, .width = desc.width};
-    rt.internal_format = desc.format;
-
-    if (desc.bindeable) rt.has_texture = true;
-    if (desc.sample_count > 1 || !desc.bindeable) rt.has_renderbuffer = true;
-    rt.sample_count = desc.sample_count;
-
-    if (desc.clear_mask) memcpy(rt.clear_mask, desc.clear_mask, 4 * sizeof(float));
-
-    rt.texture_unit_binding = -1;
-    if (desc.texture_info) {
-        memcpy(&rt.texture_info, desc.texture_info, sizeof(texture_sample_info));
-    } else {
-        rt.texture_info = rt_default_texture_info;
+    switch (rt->storage_type) {
+        case STORAGE_TYPE_RENDERBUFFER:
+            glDeleteRenderbuffers(1, &rt->renderbuffer.name);
+            break;
+        case STORAGE_TYPE_TEXTURE:
+            glDeleteTextures(1, &rt->texture.name);
+            break;
+        default:
+            // assert
+            break;
     }
 
-    rt.blending_enabled = desc.blending_enabled;
-    if (desc.blend_state) {
-        memcpy(&rt.blend_state, desc.blend_state, sizeof(blend_info));
-    } else {
-        rt.blend_state = rt_default_blend_state;
-    }
+    rt->GL_object_generation = -1;
 
-    if (rt.has_renderbuffer) rt_make_renderbuffer(&rt.renderbuffer, rt.internal_format, rt.sample_count, rt.width, rt.height);
-    if (rt.has_texture) rt_make_texture(&rt.texture, rt.texture_info, rt.internal_format, rt.width, rt.height);
-
-    rt.generation = 1;
-
-    render_target_handle handle = g_rt_count++;
-    g_rt_array[handle] = rt;
-    return handle;
+    if (handle.idx == g_rt_top - 1) g_rt_top--;
 }
 
 void render_targets_deinit_all() {
-    for (int i = 0; i < g_rt_count; i++) {
-        render_target *rt = &g_rt_array[i];
-        if (rt->has_renderbuffer)
-            glDeleteRenderbuffers(1, &rt->renderbuffer);
-        if (rt->has_texture)
-            glDeleteTextures(1, &g_rt_array[i].texture);
-
-        g_rt_array[i].generation = 0;
+    for (int i = 0; i < g_rt_top; i++) {
+        render_target_delete((render_target_handle){.idx = i, .last_GL_object_generation = g_rt_array[i].GL_object_generation});
     }
-    g_rt_count = 0;
+    g_rt_top = 0;
+}
+
+void render_target_set_clear_mask(render_target_handle handle, float clear_mask[4]) {
+    render_target *rt = render_target_from_handle(handle);
+    ASSERT(rt);
+
+    memcpy(rt->clear_mask, clear_mask, 4 * sizeof(float));
+}
+
+void render_target_set_blend_state(render_target_handle handle, blend_info state) {
+    render_target *rt = render_target_from_handle(handle);
+    ASSERT(rt);
+
+    rt->blend_state = state;
 }
 
 void render_target_resize(render_target_handle rth, int width, int height) {
     render_target *rt = render_target_from_handle(rth);
 
-    if (rt->has_renderbuffer) {
-        glDeleteRenderbuffers(0, &rt->renderbuffer);
-        rt_make_renderbuffer(&rt->renderbuffer, rt->internal_format, rt->sample_count, width, height);
+    switch (rt->storage_type) {
+        case STORAGE_TYPE_RENDERBUFFER:
+            glDeleteRenderbuffers(1, &rt->renderbuffer.name);
+            rt->renderbuffer.width = width;
+            rt->renderbuffer.height = height;
+            break;
+
+        case STORAGE_TYPE_TEXTURE:
+            texture2d *t = &rt->texture;
+            glDeleteTextures(1, &t->name);
+            texture_create_2d_fixed_size(&t->name, t->format, t->sample_info, width, height);
+            t->width = width;
+            t->height = height;
+            break;
+
+        default:
+            ASSERT(false);
+            break;
     }
-
-    if (rt->has_texture) {
-        int texture_unit_binding = -1;
-        if (rt->texture_unit_binding >= 0) {
-            texture_unit_binding = rt->texture_unit_binding;
-            render_target_unbind_texture(rth);
-        }
-        glDeleteTextures(1, &rt->texture);
-        rt_make_texture(&rt->texture, rt->texture_info, rt->internal_format, width, height);
-        if (texture_unit_binding >= 0) render_target_bind_texture(rth, texture_unit_binding);
-    }
-
-    rt->width = width;
-    rt->height = height;
-    rt->generation++;
-}
-
-// TODO: if rendering to renderbuffer, and texture is dirty, blit.
-void render_target_bind_texture(render_target_handle rth, int unit) {
-    render_target *rt = render_target_from_handle(rth);
-    if (!rt || !rt->has_texture) return;
-    if (rt->texture_unit_binding >= 0) render_target_unbind_texture(rth);
-    glBindTextureUnit(unit, rt->texture);
-    rt->texture_unit_binding = unit;
-}
-
-void render_target_unbind_texture(render_target_handle rth) {
-    render_target *rt = render_target_from_handle(rth);
-    if (!rt || !rt->has_texture || rt->texture_unit_binding < 0) return;
-    glBindTextureUnit(rt->texture_unit_binding, 0);
-    rt->texture_unit_binding = -1;
-}
-
-int render_target_handle_state(const render_target_handle rth) {
-    return rth >= 0 && rth < g_rt_count && g_rt_array[rth].generation >= 0;
+    rt->GL_object_generation++;
 }
 
 render_target *render_target_from_handle(const render_target_handle rth) {
-    if (!render_target_handle_state(rth)) return NULL;
-    return &g_rt_array[rth];
+    ASSERT(render_target_handle_state(rth));
+    return &g_rt_array[rth.idx];
 }
 
 //

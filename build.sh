@@ -1,11 +1,13 @@
 set -e
 
 mapfile -t files < <(find src -type f -name '*.c')
+mapfile -t common_files < <(find common -type f -name '*.c')
 
 mapfile -t render_files < <(find render -type f -name '*.c')
 render_files+=("third_party/glad.c")
 
 mapfile -t hdf5_files < <(find hdf5 -type f -name '*.c')
+
 
 
 # files+=("examples/amplification.c")
@@ -36,6 +38,7 @@ include_flags=(
     "-I."
     "-Ithird_party"
 )
+
 link_flags=(
     "-lm"
     "-lglfw"
@@ -50,7 +53,8 @@ if [ "$1" = "--bear" ]; then
 	 "${compiler_flags_debug[@]}" \
          "${link_flags[@]}" \
          "${include_flags[@]}" \
-	 "${files[@]}" \
+         "${files[@]}" \
+	 "${common_files[@]}" \
          "${render_files[@]}" \
 	 "${hdf5_files[@]}"
       echo "compiled db build"
@@ -61,6 +65,7 @@ elif [ "$1" = "-d" ]; then
       "${link_flags[@]}" \
       "${include_flags[@]}" \
       "${files[@]}" \
+      "${common_files[@]}" \
       "${render_files[@]}" \
       "${hdf5_files[@]}"
       echo "compiled db build"
@@ -71,10 +76,9 @@ else
       "${link_flags[@]}" \
       "${include_flags[@]}" \
       "${files[@]}" \
+      "${common_files[@]}" \
       "${render_files[@]}" \
       "${hdf5_files[@]}"
     echo "compiled release build"
     ./"${name}.o"
 fi
-
-
