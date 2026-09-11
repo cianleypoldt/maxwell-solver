@@ -36,7 +36,7 @@ compiler_flags_debug=(
 include_flags=(
     "-Iinclude"
     "-I."
-    "-Ithird_party"
+    "-Iexternal"
 )
 
 link_flags=(

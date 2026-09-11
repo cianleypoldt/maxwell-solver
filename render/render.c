@@ -423,13 +423,13 @@ int init_renderer(simctx *ctx) {
 
     renderer.wboit_reveal_rt = render_target_create(rt_desc_reveal);
 
-    render_pass_target_desc opaque_pass_targets[2] = {
+    framebuffer_target_desc opaque_pass_targets[2] = {
         {.rth = renderer.opaque_color_rt, .attachement_index = 0, .clear_enabled = 1},
         {.rth = renderer.global_depth_rt, .attachement_index = INVALID_BIND_POINT, .clear_enabled = 1}
     };
     framebuffer_init(&renderer.opaque_rp, opaque_pass_targets, 2, DEPTH);
 
-    render_pass_target_desc wboit_pass_targets[3] = {
+    framebuffer_target_desc wboit_pass_targets[3] = {
         {.rth = renderer.wboit_accum_rt, .attachement_index = 0, .clear_enabled = 1},
         {.rth = renderer.wboit_reveal_rt, .attachement_index = 1, .clear_enabled = 1},
         {.rth = renderer.global_depth_rt, .attachement_index = INVALID_BIND_POINT, .clear_enabled = 0}

@@ -7,9 +7,7 @@
 typedef struct {
     GLenum min_sample_filter;
     GLenum mag_sample_filter;
-    GLenum wrap_s;
-    GLenum wrap_t;
-    GLenum wrap_r;
+    GLenum wrap_s, wrap_t, wrap_r;
 } texture_sample_info;
 
 typedef struct {
@@ -17,7 +15,6 @@ typedef struct {
     texture_sample_info sample_info;
 
     int texture_unit_binding;
-    int generation;
     int width, height;
     GLuint name;
 } texture2d;
@@ -103,6 +100,7 @@ void render_target_delete_all();
 
 void render_target_set_clear_mask(render_target_handle handle, float clear_mask[4]);
 void render_target_set_blend_state(render_target_handle handle, blend_info state);
+
 void render_target_resize(const render_target_handle rth, int width, int height);
 
 typedef enum {
@@ -116,9 +114,15 @@ render_target *render_target_from_handle(const render_target_handle rth);
 
 #define INVALID_ATTACHEMENT_INDEX -1
 
+typedef enum {
+    LOAD_OP_CLEAR,
+    LOAD_OP_NONE
+} framebuffer_target_load_op;
+
 typedef struct {
     int attachement_index;
     render_target_handle handle;
+    framebuffer_target_load_op load_op;
 } framebuffer_attachement_handle;
 
 #define FRAMEBUFFER_MAX_COLOR_TARGETS 24
@@ -137,36 +141,27 @@ typedef struct {
 } framebuffer;
 
 int framebuffer_rebuild_fbo(framebuffer *fb);
+int framebuffer_ensure_attachements(framebuffer *fb);
 void framebuffer_apply_blend_state(framebuffer *fb);
-void framebuffer_bind(framebuffer *fb);
-
-typedef struct {
-    int sample_count;
-
-    framebuffer fb;
-    bool clear_enabled[FRAMEBUFFER_MAX_COLOR_TARGETS + 2];  // color[i], depth, stencil
-} render_pass;
+void framebuffer_bind_fbo(framebuffer *fb, GLenum target);
+void framebuffer_bind_swapchain(GLbitfield GL_clear_bits);
 
 typedef struct {
     int attachement_index;
-    int clear_enabled;
-    render_target_handle rth;
-} render_pass_target_desc;
+    framebuffer_target_load_op load_op;
+    render_target_handle target_handle;
+} framebuffer_target_desc;
+
+typedef enum {
+    DEPTH,
+    NO_DEPTH
+} framebuffer_depth_mode;
 
 // *targets is a pointer to an array of target descriptions of length target_count. If depth_mode == DEPTH, the last item must be the depth buffer description.
 // Shaders can write to the render_target's texture using the syntax layout(location = 0) out vec4 color when it is bound
 // targets[i].attachement_index defines the location
 // Since the depth buffer cannot have an attachement index, set targets[target_count - 1].bind_point to INVALID_BIND_POINT
-int framebuffer_init(framebuffer *fb, render_pass_target_desc *targets, int target_count);
-
-void render_pass_delete(render_pass *rp);
-
-// binds fbo, clears buffers, sets blending state
-void render_pass_begin(render_pass *rp);
-
-void render_pass_blit_to_textures(GLenum interp, bool color, bool depth);
-
-// render to screen
-void render_pass_begin_default(GLbitfield mask, float clear_color[4], float clear_depth);
+int framebuffer_init(framebuffer *fb, framebuffer_target_desc *targets, int target_count, framebuffer_depth_mode mode);
+void framebuffer_delete(framebuffer *fb);
 
 #endif
