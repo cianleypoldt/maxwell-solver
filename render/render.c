@@ -5,7 +5,6 @@
 #include "glad/glad.h"
 #include "simulation.h"
 #include <GLFW/glfw3.h>
-#include <H5Lpublic.h>
 #include <complex.h>
 #include <math.h>
 #include <stdbool.h>

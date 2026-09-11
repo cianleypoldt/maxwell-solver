@@ -1,6 +1,5 @@
 #include "render_pass.h"
 #include "common/debug.h"
-#include <H5Cpublic.h>
 #include <assert.h>
 #include <stdbool.h>
 #include <stdio.h>
