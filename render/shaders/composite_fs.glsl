@@ -21,6 +21,6 @@ void main()
     vec3 avg_radiated_color = accum.a > 0 ? accum.rgb / accum.a : vec3(0.0);
 
     vec3 color = background_color * reveal + (1.0f - reveal) * avg_radiated_color;
-
+    // color = vec3(texture(depth_tex, uv).r);
     frag_color = vec4(color, 0.5f);
 }

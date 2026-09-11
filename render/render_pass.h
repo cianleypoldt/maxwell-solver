@@ -101,7 +101,10 @@ void render_target_delete_all();
 void render_target_set_clear_mask(render_target_handle handle, float clear_mask[4]);
 void render_target_set_blend_state(render_target_handle handle, blend_info state);
 
-void render_target_resize(const render_target_handle rth, int width, int height);
+void render_target_resize(render_target_handle rth, int width, int height);
+
+void render_target_bind_texture(render_target_handle rth, int unit);
+void render_target_unbind_texture(render_target_handle handle);
 
 typedef enum {
     RENDER_TARGET_CORRECT,
@@ -115,8 +118,8 @@ render_target *render_target_from_handle(const render_target_handle rth);
 #define INVALID_ATTACHEMENT_INDEX -1
 
 typedef enum {
-    LOAD_OP_CLEAR,
-    LOAD_OP_NONE
+    LOAD_OP_NONE,
+    LOAD_OP_CLEAR
 } framebuffer_target_load_op;
 
 typedef struct {
@@ -138,13 +141,16 @@ typedef struct {
     int sample_count;
     int width, height;
     GLuint fbo;
+
+    bool is_complete;
 } framebuffer;
 
 int framebuffer_rebuild_fbo(framebuffer *fb);
 int framebuffer_ensure_attachements(framebuffer *fb);
 void framebuffer_apply_blend_state(framebuffer *fb);
+void framebuffer_apply_load_op(framebuffer *fb);
 void framebuffer_bind_fbo(framebuffer *fb, GLenum target);
-void framebuffer_bind_swapchain(GLbitfield GL_clear_bits);
+void framebuffer_bind_swapchain(GLbitfield GL_clear_bits, float clear_mask[4], float clear_depth);
 
 typedef struct {
     int attachement_index;

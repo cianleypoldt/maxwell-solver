@@ -4,7 +4,7 @@ mapfile -t files < <(find src -type f -name '*.c')
 mapfile -t common_files < <(find common -type f -name '*.c')
 
 mapfile -t render_files < <(find render -type f -name '*.c')
-render_files+=("third_party/glad.c")
+render_files+=("external/glad/glad.c")
 
 mapfile -t hdf5_files < <(find hdf5 -type f -name '*.c')
 
@@ -36,7 +36,8 @@ compiler_flags_debug=(
 include_flags=(
     "-Iinclude"
     "-I."
-    "-Iexternal"
+    "-Iexternal/glad/include"
+    "-Iexternal/glfw/include"
 )
 
 link_flags=(

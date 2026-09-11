@@ -6,10 +6,19 @@
 #ifdef DEBUG_MODE
 #include <stdio.h>
 #include <assert.h>
-#define DB_LOG_ERROR(message) printf("DB error in [%s, %i]: %s", __FILE__, __LINE__, message)
-#define Assert(expression)    assert(expression)
+#define DB_LOG_ERROR(...)                                 \
+    printf("DB ERROR at [%s, %i]: ", __FILE__, __LINE__), \
+        printf(__VA_ARGS__),                              \
+        printf("\n")
+
+#define DB_LOG_INFO(...)                                 \
+    printf("DB info at [%s, %i]: ", __FILE__, __LINE__), \
+        printf(__VA_ARGS__),                             \
+        printf("\n")
+
+#define Assert(expression) assert(expression)
 #else
-#define DB_LOG_ERROR(message)
+#define DB_LOG_ERROR(...)
 #define Assert(expression)
 #endif
 

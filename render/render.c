@@ -1,10 +1,12 @@
 #include "render.h"
+#include "common/debug.h"
 #include "render_pass.h"
 
 #include "field.h"
 #include "glad/glad.h"
 #include "simulation.h"
-#include <GLFW/glfw3.h>
+#include "GLFW/glfw3.h"
+#include <GL/glext.h>
 #include <complex.h>
 #include <math.h>
 #include <stdbool.h>
@@ -175,7 +177,7 @@ struct renderctx {
     render_target_handle opaque_color_rt, global_depth_rt;
     render_target_handle wboit_accum_rt, wboit_reveal_rt;
 
-    render_pass opaque_rp, wboit_rp;
+    framebuffer opaque_rp, wboit_rp;
 
     // Borders, probably temp
     struct mesh fullscreen_quad;
@@ -351,87 +353,34 @@ int init_renderer(simctx *ctx) {
         .wrap_t = GL_CLAMP_TO_EDGE,
     };
 
-    render_target_desc rt_desc_opaque_color = {
-        .width = renderer.window.width,
-        .height = renderer.window.height,
-        .format = GL_RGB8,
-        .clear_mask = (float[4]){0.0f, 0.0f, 0.0f, 1.0f},
-        .sample_count = 0,
-        .bindeable = true,
-        .blending_enabled = false,
-        .blend_state = NULL,
-        .texture_info = &default_rt_tex
-    };
     // opaque color buffer render target
-    renderer.opaque_color_rt = render_target_create(rt_desc_opaque_color);
+    renderer.opaque_color_rt = render_target_create_texture2d(GL_RGB8, default_rt_tex, renderer.window.width, renderer.window.height);
 
-    // opaque DEPTH buffer render target
-    render_target_desc rt_desc_opaque_depth = {
-        .width = renderer.window.width,
-        .height = renderer.window.height,
-        .format = GL_DEPTH_COMPONENT24,
-        .clear_mask = (float[4]){1.0f, 0.0f, 0.0f, 0.0f},
-        .sample_count = 0,
-        .bindeable = true,
-        .blending_enabled = false,
-        .blend_state = NULL,
-        .texture_info = &default_rt_tex
-    };
-    renderer.global_depth_rt = render_target_create(rt_desc_opaque_depth);
+    renderer.global_depth_rt = render_target_create_texture2d(GL_DEPTH_COMPONENT24, default_rt_tex, renderer.window.width, renderer.window.height);
+    render_target_set_clear_mask(renderer.global_depth_rt, (float[]){1.0f, 0.0f, 0.0f, 0.0f});
 
     // weighted blended wboit ACCUM buffer render target
-    render_target_desc rt_desc_accum = {
-        .width = renderer.window.width,
-        .height = renderer.window.height,
-        .format = GL_RGBA16F,
-        .clear_mask = (float[4]){0.0f, 0.0f, 0.0f, 0.0f},
-        .sample_count = 0,
-        .bindeable = true,
-        .blending_enabled = true,
-        .blend_state = &(blend_state){
-            .src_rgb = GL_ONE,
-            .dst_rgb = GL_ONE,
-            .src_alpha = GL_ONE,
-            .dst_alpha = GL_ONE,
-            .equation_rgb = GL_FUNC_ADD,
-            .equation_alpha = GL_FUNC_ADD,
-        },
-        .texture_info = &default_rt_tex
-    };
-    renderer.wboit_accum_rt = render_target_create(rt_desc_accum);
+    renderer.wboit_accum_rt = render_target_create_texture2d(GL_RGBA16F, default_rt_tex, renderer.window.width, renderer.window.height);
+    render_target_set_clear_mask(renderer.wboit_accum_rt, (float[]){0.0f, 0.0f, 0.0f, 0.0f});
+    blend_info_joined binfo_accum = {.src = GL_ONE, .dest = GL_ONE, .equation = GL_FUNC_ADD};
+    render_target_set_blend_state(renderer.wboit_accum_rt, blend_state_joined(binfo_accum));
 
     // weighted blended wboit REVEAL buffer render target
-    render_target_desc rt_desc_reveal = {
-        .width = renderer.window.width,
-        .height = renderer.window.height,
-        .format = GL_R16F,
-        .clear_mask = (float[4]){1.0f, 0.0f, 0.0f, 0.0f},  // changed alpha to 1
-        .sample_count = 0,
-        .bindeable = true,
-        .blending_enabled = true,
-        .blend_state = &(blend_state){
-            .src_rgb = GL_ZERO,
-            .src_alpha = GL_ZERO,
-            .dst_rgb = GL_ONE_MINUS_SRC_ALPHA,
-            .dst_alpha = GL_ONE_MINUS_SRC_ALPHA,
-            .equation_rgb = GL_FUNC_ADD,
-            .equation_alpha = GL_FUNC_ADD,
-        },
-        .texture_info = &default_rt_tex
-    };
-
-    renderer.wboit_reveal_rt = render_target_create(rt_desc_reveal);
+    renderer.wboit_reveal_rt = render_target_create_texture2d(GL_R16F, default_rt_tex, renderer.window.width, renderer.window.height);
+    render_target_set_clear_mask(renderer.wboit_reveal_rt, (float[]){1.0f, 0.0f, 0.0f, 0.0f});
+    blend_info_joined binfo_reveal = {.src = GL_ZERO, .dest = GL_ONE_MINUS_SRC_ALPHA, .equation = GL_FUNC_ADD};
+    render_target_set_blend_state(renderer.wboit_reveal_rt, blend_state_joined(binfo_reveal));
 
     framebuffer_target_desc opaque_pass_targets[2] = {
-        {.rth = renderer.opaque_color_rt, .attachement_index = 0, .clear_enabled = 1},
-        {.rth = renderer.global_depth_rt, .attachement_index = INVALID_BIND_POINT, .clear_enabled = 1}
+        {.attachement_index = 0, .load_op = LOAD_OP_CLEAR, .target_handle = renderer.opaque_color_rt},
+        {.attachement_index = INVALID_ATTACHEMENT_INDEX, .load_op = LOAD_OP_CLEAR, .target_handle = renderer.global_depth_rt},
     };
     framebuffer_init(&renderer.opaque_rp, opaque_pass_targets, 2, DEPTH);
 
     framebuffer_target_desc wboit_pass_targets[3] = {
-        {.rth = renderer.wboit_accum_rt, .attachement_index = 0, .clear_enabled = 1},
-        {.rth = renderer.wboit_reveal_rt, .attachement_index = 1, .clear_enabled = 1},
-        {.rth = renderer.global_depth_rt, .attachement_index = INVALID_BIND_POINT, .clear_enabled = 0}
+        {.attachement_index = 0, .load_op = LOAD_OP_CLEAR, .target_handle = renderer.wboit_accum_rt},
+        {.attachement_index = 1, .load_op = LOAD_OP_CLEAR, .target_handle = renderer.wboit_reveal_rt},
+        {.attachement_index = INVALID_ATTACHEMENT_INDEX, .load_op = LOAD_OP_NONE, .target_handle = renderer.global_depth_rt},
     };
     framebuffer_init(&renderer.wboit_rp, wboit_pass_targets, 3, DEPTH);
 
@@ -481,9 +430,9 @@ int init_renderer(simctx *ctx) {
         sample_info.min_sample_filter = sample_info.mag_sample_filter = GL_NEAREST;
         sample_info.wrap_s = sample_info.wrap_t = sample_info.wrap_r = GL_CLAMP_TO_EDGE;
         texture_create_3d_fixed_size(&renderer.Etex, GL_R32F, sample_info, renderer.field->Nz, renderer.field->Ny, renderer.field->Nx);
-        glBindTextureUnit(renderer.Etex, 0);
+        glBindTextureUnit(0, renderer.Etex);
         texture_create_3d_fixed_size(&renderer.Btex, GL_R32F, sample_info, renderer.field->Nz, renderer.field->Ny, renderer.field->Nx);
-        glBindTextureUnit(renderer.Btex, 1);
+        glBindTextureUnit(1, renderer.Btex);
     }
 
     {
@@ -528,22 +477,25 @@ void deinit_renderer() {
     glDeleteProgram(renderer.shader_volume);
     glDeleteProgram(renderer.shader_composite);
 
-    texture_destroy(renderer.Etex);
-    texture_destroy(renderer.Btex);
+    // texture_destroy(renderer.Etex);
+    // texture_destroy(renderer.Btex);
 
-    render_pass_delete(&renderer.opaque_rp);
-    render_pass_delete(&renderer.wboit_rp);
-    render_targets_deinit_all();
+    framebuffer_delete(&renderer.opaque_rp);
+    framebuffer_delete(&renderer.wboit_rp);
+    render_target_delete_all();
     free(renderer.magnitude_buffer);
-
-    printf("GL Error: %x\n", glGetError());
+    DB_LOG_ERROR("GL Error DEINIT: %x\n", glGetError());
     destroy_window();
 }
 
 static void opaque_pass() {
     // OPAQUE PASS
     // writes depth and color, reads none
-    render_pass_begin(&renderer.opaque_rp);
+
+    framebuffer_ensure_attachements(&renderer.opaque_rp);
+    framebuffer_bind_fbo(&renderer.opaque_rp, GL_FRAMEBUFFER);
+    framebuffer_apply_blend_state(&renderer.opaque_rp);
+    framebuffer_apply_load_op(&renderer.opaque_rp);
 
     // render_pass_begin_default(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT, (float[4]){}, 1.0f);
 
@@ -584,7 +536,12 @@ static void buffer_components(float *restrict Fx, float *restrict Fy, float *res
 static void transparent_pass() {
     // TRANSPARENT PASS
     // bind and clear accumulation and revealage
-    render_pass_begin(&renderer.wboit_rp);
+
+    framebuffer_ensure_attachements(&renderer.wboit_rp);
+    framebuffer_bind_fbo(&renderer.wboit_rp, GL_FRAMEBUFFER);
+    framebuffer_apply_blend_state(&renderer.wboit_rp);
+    framebuffer_apply_load_op(&renderer.wboit_rp);
+
     // Read opaque passes depth, do not write.
     glEnable(GL_DEPTH_TEST);
     glDepthMask(GL_FALSE);
@@ -616,9 +573,8 @@ static void transparent_pass() {
             mesh_draw(renderer.unit_cube, GL_TRIANGLES);
         }
     }
-
-    buffer_components(renderer.field->Ex, renderer.field->Ey, renderer.field->Ez, renderer.Etex);
-    buffer_components(renderer.field->Hz, renderer.field->Hy, renderer.field->Hz, renderer.Btex);
+    // buffer_components(renderer.field->Ex, renderer.field->Ey, renderer.field->Ez, renderer.Etex);
+    // buffer_components(renderer.field->Hz, renderer.field->Hy, renderer.field->Hz, renderer.Btex);
 
     glDisable(GL_DEPTH_TEST);
     glEnable(GL_CULL_FACE);
@@ -656,7 +612,7 @@ void render_current() {
     opaque_pass();
     transparent_pass();
 
-    render_pass_begin_default(GL_COLOR_BUFFER_BIT, (float[4]){}, 0.0f);
+    framebuffer_bind_swapchain(GL_COLOR_BUFFER_BIT, (float[4]){}, 1.0f);
 
     glUseProgram(renderer.shader_composite);
     render_target_bind_texture(renderer.opaque_color_rt, 2);
