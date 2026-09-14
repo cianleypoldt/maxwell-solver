@@ -1,5 +1,6 @@
 #include "render_pass.h"
 #include "common/debug.h"
+#include <math.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -98,7 +99,10 @@ render_target_handle render_target_create_texture2d(GLenum format, texture_sampl
             .height = height,
             .name = name
         },
-        .GL_object_generation = 0
+        .GL_object_generation = 0,
+        .width = width,
+        .height = height,
+        .sample_count = 0
     };
 
     g_rt_array[g_rt_top] = rt;
@@ -121,7 +125,10 @@ render_target_handle render_target_create_renderbuffer2d(GLenum format, int samp
             .height = height,
             .name = name,
         },
-        .GL_object_generation = 0
+        .GL_object_generation = 0,
+        .width = width,
+        .height = height,
+        .sample_count = sample_count
     };
 
     g_rt_array[g_rt_top] = rt;
@@ -190,6 +197,8 @@ void render_target_resize(render_target_handle rth, int width, int height) {
             break;
         }
     }
+    rt->width = width;
+    rt->height = height;
 
     rt->GL_object_generation++;
 }
@@ -213,12 +222,14 @@ void render_target_unbind_texture(render_target_handle handle) {
 }
 
 render_target *render_target_from_handle(const render_target_handle handle) {
-    Assert(render_target_handle_state(handle) != RENDER_TARGET_INVALID_HANDLE);
-    return &g_rt_array[handle.idx];
+    if (render_target_handle_state(handle) != RENDER_TARGET_INVALID_HANDLE)
+        return &g_rt_array[handle.idx];
+    DB_LOG_ERROR("Invalid render target handle (%i)", handle.idx);
+    return NULL;
 }
 
 render_target_state render_target_handle_state(const render_target_handle handle) {
-    if (handle.idx < 0 || handle.idx >= MAX_RENDER_TARGETS) return RENDER_TARGET_INVALID_HANDLE;
+    if (handle.idx < 0 || handle.idx >= g_rt_top) return RENDER_TARGET_INVALID_HANDLE;
     if (g_rt_array[handle.idx].GL_object_generation != handle.last_GL_object_generation) return RENDER_TARGET_OUTDATED;
     return RENDER_TARGET_CORRECT;
 }
@@ -227,7 +238,42 @@ render_target_state render_target_handle_state(const render_target_handle handle
 // Framebuffer
 //
 
-// attaches textures to fbo at correct bindpoints and specifies all of the renderpasses target's bindpoints
+static int fb_min_dimensions_and_sample_count_correctness(framebuffer *fb, int *width, int *height, int *sample_count) {
+    *width = *height = INT32_MAX;
+    bool sample_count_matches = true;
+    *sample_count = -1;  // a render targets sample count is 0 when single sample, > 0 when multisample, never -1 in operation
+
+    if (fb->has_color) {
+        for (int i = 0; i < fb->color_target_count; i++) {
+            render_target *rt = render_target_from_handle(fb->color_targets[i].handle);
+            *width = rt->width < *width ? rt->width : *width;
+            *height = rt->height < *height ? rt->height : *height;
+
+            if (*sample_count == -1) {
+                *sample_count = rt->sample_count;
+            } else if (*sample_count != rt->sample_count) {
+                sample_count_matches = false;
+            }
+        }
+    }
+    if (fb->has_depth) {
+        render_target *rt = render_target_from_handle(fb->depth_target.handle);
+        *width = rt->width < *width ? rt->width : *width;
+        *height = rt->height < *height ? rt->height : *height;
+
+        if (*sample_count == -1) {
+            *sample_count = rt->sample_count;
+        } else if (*sample_count != rt->sample_count) {
+            sample_count_matches = false;
+        }
+    }
+
+    // stencil
+
+    return sample_count_matches ? true : false;
+}
+
+// attaches targets to fbo at correct bindpoints and specifies all of the renderpasses target's bindpoints
 // as draw targets to be written to like layout(location = 0) out vec4 color;
 int framebuffer_rebuild_fbo(framebuffer *fb) {
     if (fb->fbo > 0) glDeleteFramebuffers(1, &fb->fbo);
@@ -237,35 +283,41 @@ int framebuffer_rebuild_fbo(framebuffer *fb) {
     // Set up draw buffers array and bind to FBO color attachement
     GLenum *draw_buffers = malloc(fb->color_target_count * sizeof(GLenum));
 
-    fb->sample_count = -1;               // assert sample count matches between all attachements
-    fb->width = fb->height = INT32_MAX;  // minimum height of all attachements
-
     for (int i = 0; i < fb->color_target_count; i++) {
         render_target *rt = render_target_from_handle(fb->color_targets[i].handle);
-
         draw_buffers[i] = GL_COLOR_ATTACHMENT0 + fb->color_targets[i].attachement_index;
-        if (rt->storage_type == STORAGE_TYPE_RENDERBUFFER)
+
+        if (rt->storage_type == STORAGE_TYPE_RENDERBUFFER) {
             glFramebufferRenderbuffer(GL_FRAMEBUFFER, draw_buffers[i], GL_RENDERBUFFER, rt->renderbuffer.name);
-        else
+        } else {
             glFramebufferTexture2D(GL_FRAMEBUFFER, draw_buffers[i], GL_TEXTURE_2D, rt->texture.name, 0);
+        }
 
         fb->color_targets[i].handle.last_GL_object_generation = rt->GL_object_generation;
     }
+
     glDrawBuffers(fb->color_target_count, draw_buffers);
 
     if (fb->has_depth) {
         render_target *rt = render_target_from_handle(fb->depth_target.handle);
 
-        if (rt->storage_type == STORAGE_TYPE_RENDERBUFFER)
+        if (rt->storage_type == STORAGE_TYPE_RENDERBUFFER) {
             glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, rt->renderbuffer.name);
-        else if (rt->storage_type == STORAGE_TYPE_TEXTURE)
+        } else if (rt->storage_type == STORAGE_TYPE_TEXTURE) {
             glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, rt->texture.name, 0);
+        }
         fb->depth_target.handle.last_GL_object_generation = rt->GL_object_generation;
     }
 
     // Stencil!
 
     if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) goto error;
+
+    if (!fb_min_dimensions_and_sample_count_correctness(fb, &fb->width, &fb->height, &fb->sample_count)) {
+        DB_LOG_ERROR("Framebuffer sample_count mismatch");
+        goto error;
+    }
+
     fb->is_complete = true;
 
     free(draw_buffers);
@@ -274,7 +326,11 @@ int framebuffer_rebuild_fbo(framebuffer *fb) {
     return 0;
 
 error:
-    glDeleteFramebuffers(1, &fb->fbo);
+    fb->is_complete = false;
+    if (fb->fbo != 0) {
+        glDeleteFramebuffers(1, &fb->fbo);
+        fb->fbo = 0;
+    }
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     free(draw_buffers);
     return -1;
@@ -358,6 +414,17 @@ void framebuffer_bind_swapchain(GLbitfield mask, float clear_color[4], float cle
     glClearColor(clear_color[0], clear_color[1], clear_color[2], clear_color[3]);
     glClearDepth(clear_depth);
     glClear(mask);
+}
+
+void framebuffer_performa_blit(framebuffer *fb_src, framebuffer *fb_dst, bool color, bool depth, bool stencil) {
+    GLbitfield mask = 0x00;
+    if (color) mask |= GL_COLOR_BUFFER_BIT;
+    if (depth) mask |= GL_DEPTH_BUFFER_BIT;
+    if (stencil) mask |= GL_STENCIL_BUFFER_BIT;
+    GLenum filter = GL_LINEAR;
+    framebuffer_ensure_attachements(fb_src);
+    framebuffer_ensure_attachements(fb_dst);
+    glBlitNamedFramebuffer(fb_src->fbo, fb_dst->fbo, 0, 0, fb_src->width, fb_src->height, 0, 0, fb_dst->width, fb_dst->width, mask, filter);
 }
 
 // TODO: fix / rewrite

@@ -87,6 +87,8 @@ typedef struct {
 
         texture_handle texture_handle;
     };
+
+    int width, height, sample_count;  // duplicated for convenience
 } render_target;
 
 #define MAX_RENDER_TARGETS 32
@@ -112,8 +114,8 @@ typedef enum {
     RENDER_TARGET_OUTDATED
 } render_target_state;
 
-render_target_state render_target_handle_state(const render_target_handle rth);
-render_target *render_target_from_handle(const render_target_handle rth);
+render_target_state render_target_handle_state(const render_target_handle handle);
+render_target *render_target_from_handle(const render_target_handle handle);
 
 #define INVALID_ATTACHEMENT_INDEX -1
 
@@ -150,6 +152,8 @@ int framebuffer_ensure_attachements(framebuffer *fb);
 void framebuffer_apply_blend_state(framebuffer *fb);
 void framebuffer_apply_load_op(framebuffer *fb);
 void framebuffer_bind_fbo(framebuffer *fb, GLenum target);
+void framebuffer_performa_blit(framebuffer *fb_dst, framebuffer *fb_src, bool color, bool depth, bool stencil);
+
 void framebuffer_bind_swapchain(GLbitfield GL_clear_bits, float clear_mask[4], float clear_depth);
 
 typedef struct {
