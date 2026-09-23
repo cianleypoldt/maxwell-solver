@@ -47,6 +47,24 @@ struct camera {
     float view[16];
 };
 
+// Source - https://stackoverflow.com/a/11258474
+// Posted by Mārtiņš Možeiko
+// Retrieved 2026-09-23, License - CC BY-SA 3.0
+
+void CheckOpenGLError(const char *stmt, const char *fname, int line) {
+    GLenum err = glGetError();
+    if (err != GL_NO_ERROR) {
+        printf("OpenGL error %08x, at %s:%i - for %s\n", err, fname, line, stmt);
+        abort();
+    }
+}
+
+#define GL_CHECK(stmt)                               \
+    do {                                             \
+        stmt;                                        \
+        CheckOpenGLError(#stmt, __FILE__, __LINE__); \
+    } while (0)
+
 static void camera_build_proj(struct camera *camera) {
     // axis symmetric proection
     // TODO: simplify generic projection math maybe
@@ -175,11 +193,11 @@ struct renderctx {
     GLuint frame_data_ubo;
     struct frame_data frame_data;
 
+    render_target_handle opaque_color_4sampled_rt, global_depth_4sampled_rt;
     render_target_handle opaque_color_rt, global_depth_rt;
-    render_target_handle a_opaque_color_rt, a_global_depth_rt;
     render_target_handle wboit_accum_rt, wboit_reveal_rt;
 
-    framebuffer a_opaque_rp, opaque_rp, wboit_rp;
+    framebuffer opaque_4sampled_rp, opaque_rp, wboit_rp;
 
     // Borders, probably temp
     struct mesh fullscreen_quad;
@@ -235,6 +253,8 @@ static void window_resize_callback(GLFWwindow *window, int width, int height) {
     }
     // render_target_resize(renderer.a_opaque_color_rt, width, height);
 
+    render_target_resize(renderer.global_depth_4sampled_rt, width, height);
+    render_target_resize(renderer.opaque_color_4sampled_rt, width, height);
     render_target_resize(renderer.global_depth_rt, width, height);
     render_target_resize(renderer.opaque_color_rt, width, height);
     render_target_resize(renderer.wboit_accum_rt, width, height);
@@ -359,7 +379,10 @@ int init_renderer(simctx *ctx) {
 
     //
     // TEMP target for blitting
-    renderer.a_opaque_color_rt = render_target_create_texture2d(GL_RGB8, default_rt_tex, renderer.window.width, renderer.window.height);
+    int sample_count = 12;
+    renderer.opaque_color_4sampled_rt = render_target_create_renderbuffer2d(GL_RGB8, sample_count, renderer.window.width, renderer.window.height);
+    renderer.global_depth_4sampled_rt = render_target_create_renderbuffer2d(GL_DEPTH_COMPONENT24, sample_count, renderer.window.width, renderer.window.height);
+    render_target_set_clear_mask(renderer.global_depth_4sampled_rt, (float[]){1.0f, 0.0f, 0.0f, 0.0f});
 
     // opaque color buffer render target
     renderer.opaque_color_rt = render_target_create_texture2d(GL_RGB8, default_rt_tex, renderer.window.width, renderer.window.height);
@@ -369,10 +392,10 @@ int init_renderer(simctx *ctx) {
 
     //
     framebuffer_target_desc a_opaque_pass_targets[2] = {
-        {.attachement_index = 0, .load_op = LOAD_OP_CLEAR, .target_handle = renderer.a_opaque_color_rt},
-        {.attachement_index = INVALID_ATTACHEMENT_INDEX, .load_op = LOAD_OP_CLEAR, .target_handle = renderer.global_depth_rt},
+        {.attachment_index = 0, .load_op = LOAD_OP_CLEAR, .target_handle = renderer.opaque_color_4sampled_rt},
+        {.attachment_index = INVALID_ATTACHMENT_INDEX, .load_op = LOAD_OP_CLEAR, .target_handle = renderer.global_depth_4sampled_rt},
     };
-    framebuffer_init(&renderer.a_opaque_rp, a_opaque_pass_targets, 2, DEPTH);
+    framebuffer_init(&renderer.opaque_4sampled_rp, a_opaque_pass_targets, 2, DEPTH);
     //
 
     // weighted blended wboit ACCUM buffer render target
@@ -388,15 +411,15 @@ int init_renderer(simctx *ctx) {
     render_target_set_blend_state(renderer.wboit_reveal_rt, blend_state_joined(binfo_reveal));
 
     framebuffer_target_desc opaque_pass_targets[2] = {
-        {.attachement_index = 0, .load_op = LOAD_OP_CLEAR, .target_handle = renderer.opaque_color_rt},
-        {.attachement_index = INVALID_ATTACHEMENT_INDEX, .load_op = LOAD_OP_CLEAR, .target_handle = renderer.global_depth_rt},
+        {.attachment_index = 0, .load_op = LOAD_OP_CLEAR, .target_handle = renderer.opaque_color_rt},
+        {.attachment_index = INVALID_ATTACHMENT_INDEX, .load_op = LOAD_OP_CLEAR, .target_handle = renderer.global_depth_rt},
     };
     framebuffer_init(&renderer.opaque_rp, opaque_pass_targets, 2, DEPTH);
 
     framebuffer_target_desc wboit_pass_targets[3] = {
-        {.attachement_index = 0, .load_op = LOAD_OP_CLEAR, .target_handle = renderer.wboit_accum_rt},
-        {.attachement_index = 1, .load_op = LOAD_OP_CLEAR, .target_handle = renderer.wboit_reveal_rt},
-        {.attachement_index = INVALID_ATTACHEMENT_INDEX, .load_op = LOAD_OP_NONE, .target_handle = renderer.global_depth_rt},
+        {.attachment_index = 0, .load_op = LOAD_OP_CLEAR, .target_handle = renderer.wboit_accum_rt},
+        {.attachment_index = 1, .load_op = LOAD_OP_CLEAR, .target_handle = renderer.wboit_reveal_rt},
+        {.attachment_index = INVALID_ATTACHMENT_INDEX, .load_op = LOAD_OP_NONE, .target_handle = renderer.global_depth_rt},
     };
     framebuffer_init(&renderer.wboit_rp, wboit_pass_targets, 3, DEPTH);
 
@@ -508,17 +531,15 @@ static void opaque_pass() {
     // OPAQUE PASS
     // writes depth and color, reads none
 
-    framebuffer_ensure_attachements(&renderer.a_opaque_rp);
-    framebuffer_bind_fbo(&renderer.a_opaque_rp, GL_FRAMEBUFFER);
-    framebuffer_apply_blend_state(&renderer.a_opaque_rp);
-    framebuffer_apply_load_op(&renderer.a_opaque_rp);
+    framebuffer_ensure_attachments(&renderer.opaque_4sampled_rp);
+    framebuffer_bind_fbo(&renderer.opaque_4sampled_rp, GL_FRAMEBUFFER);
+    framebuffer_apply_blend_state(&renderer.opaque_4sampled_rp);
+    framebuffer_apply_load_op(&renderer.opaque_4sampled_rp);
 
     // framebuffer_ensure_attachements(&renderer.opaque_rp);
     // framebuffer_bind_fbo(&renderer.opaque_rp, GL_FRAMEBUFFER);
     // framebuffer_apply_blend_state(&renderer.opaque_rp);
     // framebuffer_apply_load_op(&renderer.opaque_rp);
-
-    // render_pass_begin_default(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT, (float[4]){}, 1.0f);
 
     glDepthFunc(GL_LESS);
     glEnable(GL_DEPTH_TEST);
@@ -551,8 +572,8 @@ static void opaque_pass() {
     }
     glDisable(GL_DEPTH_TEST);
 
-    framebuffer_performa_blit(&renderer.a_opaque_rp, &renderer.opaque_rp, true, false, false);
-    printf("height: %i\n", renderer.a_opaque_rp.height);
+    framebuffer_perform_blit(&renderer.opaque_4sampled_rp, &renderer.opaque_rp, GL_COLOR_BUFFER_BIT, GL_LINEAR);
+    framebuffer_perform_blit(&renderer.opaque_4sampled_rp, &renderer.opaque_rp, GL_DEPTH_BUFFER_BIT, GL_NEAREST);
 }
 
 static void buffer_components(float *restrict Fx, float *restrict Fy, float *restrict Fz, GLuint texture);
@@ -561,7 +582,7 @@ static void transparent_pass() {
     // TRANSPARENT PASS
     // bind and clear accumulation and revealage
 
-    framebuffer_ensure_attachements(&renderer.wboit_rp);
+    framebuffer_ensure_attachments(&renderer.wboit_rp);
     framebuffer_bind_fbo(&renderer.wboit_rp, GL_FRAMEBUFFER);
     framebuffer_apply_blend_state(&renderer.wboit_rp);
     framebuffer_apply_load_op(&renderer.wboit_rp);
@@ -666,8 +687,8 @@ static void buffer_components(float *restrict Fx, float *restrict Fy, float *res
     glTexSubImage3D(GL_TEXTURE_3D, 0, 0, 0, 0, renderer.field->Nz, renderer.field->Ny, renderer.field->Nx, GL_RED, GL_FLOAT, renderer.magnitude_buffer);
 }
 
-#define CAMERA_SPEED_HORIZONTAL 0.2
-#define CAMERA_SPEED_VERTICAL   0.1
+#define CAMERA_SPEED_HORIZONTAL 0.005
+#define CAMERA_SPEED_VERTICAL   0.001
 
 void process_input() {
     // TODO: Rewrite everything

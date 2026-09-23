@@ -285,7 +285,7 @@ int framebuffer_rebuild_fbo(framebuffer *fb) {
 
     for (int i = 0; i < fb->color_target_count; i++) {
         render_target *rt = render_target_from_handle(fb->color_targets[i].handle);
-        draw_buffers[i] = GL_COLOR_ATTACHMENT0 + fb->color_targets[i].attachement_index;
+        draw_buffers[i] = GL_COLOR_ATTACHMENT0 + fb->color_targets[i].attachment_index;
 
         if (rt->storage_type == STORAGE_TYPE_RENDERBUFFER) {
             glFramebufferRenderbuffer(GL_FRAMEBUFFER, draw_buffers[i], GL_RENDERBUFFER, rt->renderbuffer.name);
@@ -336,7 +336,7 @@ error:
     return -1;
 }
 
-int framebuffer_ensure_attachements(framebuffer *fb) {
+int framebuffer_ensure_attachments(framebuffer *fb) {
     Assert(fb->is_complete);
     for (int i = 0; i < fb->color_target_count; i++) {
         if (fb->color_targets[i].handle.last_GL_object_generation != render_target_from_handle(fb->color_targets[i].handle)->GL_object_generation) {
@@ -348,7 +348,7 @@ int framebuffer_ensure_attachements(framebuffer *fb) {
     if (fb->has_depth && (fb->depth_target.handle.last_GL_object_generation != render_target_from_handle(fb->depth_target.handle)->GL_object_generation))
         if (framebuffer_rebuild_fbo(fb) < 0) return -1;
 
-    // Stencil!
+    // TODO: Stencil!
 
     return 0;
 }
@@ -358,7 +358,7 @@ void framebuffer_apply_blend_state(framebuffer *fb) {
     for (int i = 0; i < fb->color_target_count; i++) {
         render_target *rt = render_target_from_handle(fb->color_targets[i].handle);
         blend_info *b = &rt->blend_state;
-        int attachement_index = fb->color_targets[i].attachement_index;
+        int attachement_index = fb->color_targets[i].attachment_index;
 
         if (rt->blend_state.blending_enabled) {
             glEnablei(GL_BLEND, attachement_index);
@@ -391,7 +391,7 @@ void framebuffer_apply_load_op(framebuffer *fb) {
         if (fb->color_targets[i].load_op == LOAD_OP_CLEAR) {
             glClearBufferfv(
                 GL_COLOR,
-                fb->color_targets[i].attachement_index,
+                fb->color_targets[i].attachment_index,
                 render_target_from_handle(fb->color_targets[i].handle)->clear_mask
             );
         }
@@ -416,15 +416,10 @@ void framebuffer_bind_swapchain(GLbitfield mask, float clear_color[4], float cle
     glClear(mask);
 }
 
-void framebuffer_performa_blit(framebuffer *fb_src, framebuffer *fb_dst, bool color, bool depth, bool stencil) {
-    GLbitfield mask = 0x00;
-    if (color) mask |= GL_COLOR_BUFFER_BIT;
-    if (depth) mask |= GL_DEPTH_BUFFER_BIT;
-    if (stencil) mask |= GL_STENCIL_BUFFER_BIT;
-    GLenum filter = GL_LINEAR;
-    framebuffer_ensure_attachements(fb_src);
-    framebuffer_ensure_attachements(fb_dst);
-    glBlitNamedFramebuffer(fb_src->fbo, fb_dst->fbo, 0, 0, fb_src->width, fb_src->height, 0, 0, fb_dst->width, fb_dst->width, mask, filter);
+void framebuffer_perform_blit(framebuffer *fb_src, framebuffer *fb_dst, GLbitfield mask, GLenum filter) {
+    framebuffer_ensure_attachments(fb_src);
+    framebuffer_ensure_attachments(fb_dst);
+    glBlitNamedFramebuffer(fb_src->fbo, fb_dst->fbo, 0, 0, fb_src->width, fb_src->height, 0, 0, fb_dst->width, fb_dst->height, mask, filter);
 }
 
 // TODO: fix / rewrite
@@ -446,10 +441,10 @@ int framebuffer_init(framebuffer *fb, framebuffer_target_desc *targets, int targ
             fb->has_depth = true;
             framebuffer_target_desc *depth_desc = &targets[target_count - 1];
 
-            fb->depth_target = (framebuffer_attachement_handle){
+            fb->depth_target = (framebuffer_attachment_handle){
                 .load_op = depth_desc->load_op,
                 .handle = {.last_GL_object_generation = -1, .idx = depth_desc->target_handle.idx},
-                .attachement_index = depth_desc->attachement_index,
+                .attachment_index = depth_desc->attachment_index,
             };
             fb->color_target_count = target_count - 1;
             break;
@@ -470,10 +465,10 @@ int framebuffer_init(framebuffer *fb, framebuffer_target_desc *targets, int targ
 
     // handle colored render targets (and render_pass-wide blending)
     for (int i = 0; i < fb->color_target_count; i++) {
-        fb->color_targets[i] = (framebuffer_attachement_handle){
+        fb->color_targets[i] = (framebuffer_attachment_handle){
             .load_op = targets[i].load_op,
             .handle = {.last_GL_object_generation = -1, .idx = targets[i].target_handle.idx},
-            .attachement_index = targets[i].attachement_index,
+            .attachment_index = targets[i].attachment_index,
         };
     }
 

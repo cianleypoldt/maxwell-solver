@@ -117,7 +117,7 @@ typedef enum {
 render_target_state render_target_handle_state(const render_target_handle handle);
 render_target *render_target_from_handle(const render_target_handle handle);
 
-#define INVALID_ATTACHEMENT_INDEX -1
+#define INVALID_ATTACHMENT_INDEX -1
 
 typedef enum {
     LOAD_OP_NONE,
@@ -125,10 +125,10 @@ typedef enum {
 } framebuffer_target_load_op;
 
 typedef struct {
-    int attachement_index;
+    int attachment_index;
     render_target_handle handle;
     framebuffer_target_load_op load_op;
-} framebuffer_attachement_handle;
+} framebuffer_attachment_handle;
 
 #define FRAMEBUFFER_MAX_COLOR_TARGETS 24
 
@@ -136,9 +136,9 @@ typedef struct {
     bool has_color, has_depth, has_stencil;
 
     int color_target_count;
-    framebuffer_attachement_handle color_targets[FRAMEBUFFER_MAX_COLOR_TARGETS];
-    framebuffer_attachement_handle depth_target;
-    framebuffer_attachement_handle stencil_target;
+    framebuffer_attachment_handle color_targets[FRAMEBUFFER_MAX_COLOR_TARGETS];
+    framebuffer_attachment_handle depth_target;
+    framebuffer_attachment_handle stencil_target;
 
     int sample_count;
     int width, height;
@@ -148,16 +148,16 @@ typedef struct {
 } framebuffer;
 
 int framebuffer_rebuild_fbo(framebuffer *fb);
-int framebuffer_ensure_attachements(framebuffer *fb);
+int framebuffer_ensure_attachments(framebuffer *fb);
 void framebuffer_apply_blend_state(framebuffer *fb);
 void framebuffer_apply_load_op(framebuffer *fb);
 void framebuffer_bind_fbo(framebuffer *fb, GLenum target);
-void framebuffer_performa_blit(framebuffer *fb_dst, framebuffer *fb_src, bool color, bool depth, bool stencil);
+void framebuffer_perform_blit(framebuffer *fb_src, framebuffer *fb_dst, GLbitfield mask, GLenum filter);
 
 void framebuffer_bind_swapchain(GLbitfield GL_clear_bits, float clear_mask[4], float clear_depth);
 
 typedef struct {
-    int attachement_index;
+    int attachment_index;
     framebuffer_target_load_op load_op;
     render_target_handle target_handle;
 } framebuffer_target_desc;
@@ -169,8 +169,8 @@ typedef enum {
 
 // *targets is a pointer to an array of target descriptions of length target_count. If depth_mode == DEPTH, the last item must be the depth buffer description.
 // Shaders can write to the render_target's texture using the syntax layout(location = 0) out vec4 color when it is bound
-// targets[i].attachement_index defines the location
-// Since the depth buffer cannot have an attachement index, set targets[target_count - 1].bind_point to INVALID_BIND_POINT
+// targets[i].attachment_index defines the location
+// Since the depth buffer cannot have an attachment index, set targets[target_count - 1].bind_point to INVALID_BIND_POINT
 int framebuffer_init(framebuffer *fb, framebuffer_target_desc *targets, int target_count, framebuffer_depth_mode mode);
 void framebuffer_delete(framebuffer *fb);
 
