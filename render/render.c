@@ -411,8 +411,8 @@ int init_renderer(simctx *ctx) {
     render_target_set_blend_state(renderer.wboit_reveal_rt, blend_state_joined(binfo_reveal));
 
     framebuffer_target_desc opaque_pass_targets[2] = {
-        {.attachment_index = 0, .load_op = LOAD_OP_CLEAR, .target_handle = renderer.opaque_color_rt},
-        {.attachment_index = INVALID_ATTACHMENT_INDEX, .load_op = LOAD_OP_CLEAR, .target_handle = renderer.global_depth_rt},
+        {.attachment_index = 0, .load_op = LOAD_OP_NONE, .target_handle = renderer.opaque_color_rt},
+        {.attachment_index = INVALID_ATTACHMENT_INDEX, .load_op = LOAD_OP_NONE, .target_handle = renderer.global_depth_rt},
     };
     framebuffer_init(&renderer.opaque_rp, opaque_pass_targets, 2, DEPTH);
 
@@ -519,9 +519,9 @@ void deinit_renderer() {
     // texture_destroy(renderer.Etex);
     // texture_destroy(renderer.Btex);
 
-    framebuffer_delete(&renderer.opaque_rp);
-    framebuffer_delete(&renderer.wboit_rp);
-    render_target_delete_all();
+    framebuffer_destroy(&renderer.opaque_rp);
+    framebuffer_destroy(&renderer.wboit_rp);
+    render_target_destroy_all();
     free(renderer.magnitude_buffer);
     DB_LOG_ERROR("GL Error DEINIT: %x\n", glGetError());
     destroy_window();
@@ -531,10 +531,7 @@ static void opaque_pass() {
     // OPAQUE PASS
     // writes depth and color, reads none
 
-    framebuffer_ensure_attachments(&renderer.opaque_4sampled_rp);
-    framebuffer_bind_fbo(&renderer.opaque_4sampled_rp, GL_FRAMEBUFFER);
-    framebuffer_apply_blend_state(&renderer.opaque_4sampled_rp);
-    framebuffer_apply_load_op(&renderer.opaque_4sampled_rp);
+    framebuffer_use(&renderer.opaque_4sampled_rp);
 
     // framebuffer_ensure_attachements(&renderer.opaque_rp);
     // framebuffer_bind_fbo(&renderer.opaque_rp, GL_FRAMEBUFFER);
@@ -544,9 +541,6 @@ static void opaque_pass() {
     glDepthFunc(GL_LESS);
     glEnable(GL_DEPTH_TEST);
 
-    // Volume Borders
-    glUseProgram(renderer.shader_wireframe);
-    mesh_draw(renderer.unit_cube_wireframe, GL_LINES);
     // Sources opaque
     float axis[3] = {4, 4, -1};
     vec_normalize(axis, axis, 3);
@@ -570,10 +564,16 @@ static void opaque_pass() {
         glUniformMatrix4fv(renderer.uloc_srcs_model_opaque, 1, GL_FALSE, model);
         mesh_draw(renderer.unit_cube, GL_TRIANGLES);
     }
-    glDisable(GL_DEPTH_TEST);
 
-    framebuffer_perform_blit(&renderer.opaque_4sampled_rp, &renderer.opaque_rp, GL_COLOR_BUFFER_BIT, GL_LINEAR);
-    framebuffer_perform_blit(&renderer.opaque_4sampled_rp, &renderer.opaque_rp, GL_DEPTH_BUFFER_BIT, GL_NEAREST);
+    framebuffer_blit_to(&renderer.opaque_4sampled_rp, &renderer.opaque_rp, GL_COLOR_BUFFER_BIT, GL_LINEAR);
+    framebuffer_blit_to(&renderer.opaque_4sampled_rp, &renderer.opaque_rp, GL_DEPTH_BUFFER_BIT, GL_NEAREST);
+
+    framebuffer_use(&renderer.opaque_rp);
+
+    // Volume Borders
+    glUseProgram(renderer.shader_wireframe);
+    mesh_draw(renderer.unit_cube_wireframe, GL_LINES);
+    glDisable(GL_DEPTH_TEST);
 }
 
 static void buffer_components(float *restrict Fx, float *restrict Fy, float *restrict Fz, GLuint texture);
@@ -582,10 +582,7 @@ static void transparent_pass() {
     // TRANSPARENT PASS
     // bind and clear accumulation and revealage
 
-    framebuffer_ensure_attachments(&renderer.wboit_rp);
-    framebuffer_bind_fbo(&renderer.wboit_rp, GL_FRAMEBUFFER);
-    framebuffer_apply_blend_state(&renderer.wboit_rp);
-    framebuffer_apply_load_op(&renderer.wboit_rp);
+    framebuffer_use(&renderer.wboit_rp);
 
     // Read opaque passes depth, do not write.
     glEnable(GL_DEPTH_TEST);
@@ -657,7 +654,7 @@ void render_current() {
     opaque_pass();
     transparent_pass();
 
-    framebuffer_bind_swapchain(GL_COLOR_BUFFER_BIT, (float[4]){}, 1.0f);
+    framebuffer_use_swapchain(GL_COLOR_BUFFER_BIT, (float[4]){}, 1.0f);
 
     glUseProgram(renderer.shader_composite);
     render_target_bind_texture(renderer.opaque_color_rt, 2);
@@ -687,8 +684,8 @@ static void buffer_components(float *restrict Fx, float *restrict Fy, float *res
     glTexSubImage3D(GL_TEXTURE_3D, 0, 0, 0, 0, renderer.field->Nz, renderer.field->Ny, renderer.field->Nx, GL_RED, GL_FLOAT, renderer.magnitude_buffer);
 }
 
-#define CAMERA_SPEED_HORIZONTAL 0.005
-#define CAMERA_SPEED_VERTICAL   0.001
+#define CAMERA_SPEED_HORIZONTAL 0.1
+#define CAMERA_SPEED_VERTICAL   0.05
 
 void process_input() {
     // TODO: Rewrite everything

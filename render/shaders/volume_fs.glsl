@@ -27,7 +27,6 @@ uniform float far;
 
 uniform sampler2D depth_tex;
 
-
 float step_size = 0.01;
 
 #define BIG_NUMBER 99999999.0f
@@ -77,13 +76,12 @@ float find_entry(vec3 ray_dir) {
 
 void main() // requires backface culling!
 {
-
     vec3 ray_dir = normalize(ray_vec);
     vec2 uv = gl_FragCoord.xy / viewport_size;
     float z_opaque = (2.0f * near * far) / (far + near - texture(depth_tex, uv).r * (far - near));
     float z_backface = (2.0f * near * far) / (far + near - gl_FragCoord.z * (far - near));
 
-    float dot = abs(dot(camera_forward_v4.xyz,ray_dir));
+    float dot = abs(dot(camera_forward_v4.xyz, ray_dir));
     float t_backface = z_backface / dot;
     float t_opaque = z_opaque / dot;
 

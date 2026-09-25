@@ -135,7 +135,7 @@ render_target_handle render_target_create_renderbuffer2d(GLenum format, int samp
     return (render_target_handle){.last_GL_object_generation = 0, .idx = g_rt_top++};
 }
 
-void render_target_delete(render_target_handle handle) {
+void render_target_destroy(render_target_handle handle) {
     render_target *rt = render_target_from_handle(handle);
     if (rt->GL_object_generation < 0) return;
 
@@ -156,9 +156,9 @@ void render_target_delete(render_target_handle handle) {
     if (handle.idx == g_rt_top - 1) g_rt_top--;
 }
 
-void render_target_delete_all() {
+void render_target_destroy_all() {
     for (int i = 0; i < g_rt_top; i++) {
-        render_target_delete((render_target_handle){.idx = i, .last_GL_object_generation = g_rt_array[i].GL_object_generation});
+        render_target_destroy((render_target_handle){.idx = i, .last_GL_object_generation = g_rt_array[i].GL_object_generation});
     }
     g_rt_top = 0;
 }
@@ -243,7 +243,7 @@ static int fb_min_dimensions_and_sample_count_correctness(framebuffer *fb, int *
     bool sample_count_matches = true;
     *sample_count = -1;  // a render targets sample count is 0 when single sample, > 0 when multisample, never -1 in operation
 
-    if (fb->has_color) {
+    if (fb->color_target_count > 0) {
         for (int i = 0; i < fb->color_target_count; i++) {
             render_target *rt = render_target_from_handle(fb->color_targets[i].handle);
             *width = rt->width < *width ? rt->width : *width;
@@ -318,7 +318,7 @@ int framebuffer_rebuild_fbo(framebuffer *fb) {
         goto error;
     }
 
-    fb->is_complete = true;
+    fb->is_initialized = true;
 
     free(draw_buffers);
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -326,7 +326,7 @@ int framebuffer_rebuild_fbo(framebuffer *fb) {
     return 0;
 
 error:
-    fb->is_complete = false;
+    fb->is_initialized = false;
     if (fb->fbo != 0) {
         glDeleteFramebuffers(1, &fb->fbo);
         fb->fbo = 0;
@@ -337,7 +337,7 @@ error:
 }
 
 int framebuffer_ensure_attachments(framebuffer *fb) {
-    Assert(fb->is_complete);
+    Assert(fb->is_initialized);
     for (int i = 0; i < fb->color_target_count; i++) {
         if (fb->color_targets[i].handle.last_GL_object_generation != render_target_from_handle(fb->color_targets[i].handle)->GL_object_generation) {
             if (framebuffer_rebuild_fbo(fb) >= 0)
@@ -354,7 +354,7 @@ int framebuffer_ensure_attachments(framebuffer *fb) {
 }
 
 void framebuffer_apply_blend_state(framebuffer *fb) {
-    Assert(fb->is_complete);
+    Assert(fb->is_initialized);
     for (int i = 0; i < fb->color_target_count; i++) {
         render_target *rt = render_target_from_handle(fb->color_targets[i].handle);
         blend_info *b = &rt->blend_state;
@@ -386,7 +386,7 @@ void framebuffer_apply_blend_state(framebuffer *fb) {
 }
 
 void framebuffer_apply_load_op(framebuffer *fb) {
-    Assert(fb->is_complete);
+    Assert(fb->is_initialized);
     for (int i = 0; i < fb->color_target_count; i++) {
         if (fb->color_targets[i].load_op == LOAD_OP_CLEAR) {
             glClearBufferfv(
@@ -403,12 +403,19 @@ void framebuffer_apply_load_op(framebuffer *fb) {
     }
 }
 
-void framebuffer_bind_fbo(framebuffer *fb, GLenum target) {
-    Assert(fb->is_complete);
+void framebuffer_bind_internal_object(framebuffer *fb, GLenum target) {
+    Assert(fb->is_initialized);
     glBindFramebuffer(target, fb->fbo);
 }
 
-void framebuffer_bind_swapchain(GLbitfield mask, float clear_color[4], float clear_depth) {
+void framebuffer_use(framebuffer *fb) {
+    framebuffer_ensure_attachments(fb);
+    framebuffer_bind_internal_object(fb, GL_FRAMEBUFFER);
+    framebuffer_apply_blend_state(fb);
+    framebuffer_apply_load_op(fb);
+}
+
+void framebuffer_use_swapchain(GLbitfield mask, float clear_color[4], float clear_depth) {
     glDisable(GL_BLEND);
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glClearColor(clear_color[0], clear_color[1], clear_color[2], clear_color[3]);
@@ -416,25 +423,24 @@ void framebuffer_bind_swapchain(GLbitfield mask, float clear_color[4], float cle
     glClear(mask);
 }
 
-void framebuffer_perform_blit(framebuffer *fb_src, framebuffer *fb_dst, GLbitfield mask, GLenum filter) {
-    framebuffer_ensure_attachments(fb_src);
+void framebuffer_blit_to(framebuffer *fb, framebuffer *fb_dst, GLbitfield mask, GLenum filter) {
+    framebuffer_ensure_attachments(fb);
     framebuffer_ensure_attachments(fb_dst);
-    glBlitNamedFramebuffer(fb_src->fbo, fb_dst->fbo, 0, 0, fb_src->width, fb_src->height, 0, 0, fb_dst->width, fb_dst->height, mask, filter);
+    glBlitNamedFramebuffer(fb->fbo, fb_dst->fbo, 0, 0, fb->width, fb->height, 0, 0, fb_dst->width, fb_dst->height, mask, filter);
 }
 
 // TODO: fix / rewrite
-int framebuffer_init(framebuffer *fb, framebuffer_target_desc *targets, int target_count, framebuffer_depth_mode mode) {
+int framebuffer_init(framebuffer *fb, const framebuffer_target_desc *targets, int target_count, framebuffer_depth_mode mode) {
     Assert(fb && targets && target_count > 0);
     *fb = (framebuffer){};
 
     // only options supported for now
-    fb->has_color = true;
     fb->has_stencil = false;
     // these are deduced every rebuild
     fb->sample_count = 0;
     fb->width = fb->height = 0;
 
-    fb->is_complete = false;
+    fb->is_initialized = false;
 
     switch (mode) {
         case DEPTH: {
@@ -478,6 +484,6 @@ int framebuffer_init(framebuffer *fb, framebuffer_target_desc *targets, int targ
     return 0;
 }
 
-void framebuffer_delete(framebuffer *fb) {
+void framebuffer_destroy(framebuffer *fb) {
     glDeleteFramebuffers(1, &fb->fbo);
 }

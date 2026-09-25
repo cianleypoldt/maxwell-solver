@@ -97,8 +97,8 @@ render_target_handle render_target_create_texture2d(GLenum format, texture_sampl
 // render_target_handle render_target_create_with_texture_handle(texture_handle texture_handle);
 render_target_handle render_target_create_renderbuffer2d(GLenum format, int sample_count, int width, int height);
 
-void render_target_delete(render_target_handle handle);
-void render_target_delete_all();
+void render_target_destroy(render_target_handle handle);
+void render_target_destroy_all();
 
 void render_target_set_clear_mask(render_target_handle handle, float clear_mask[4]);
 void render_target_set_blend_state(render_target_handle handle, blend_info state);
@@ -133,9 +133,9 @@ typedef struct {
 #define FRAMEBUFFER_MAX_COLOR_TARGETS 24
 
 typedef struct {
-    bool has_color, has_depth, has_stencil;
-
     int color_target_count;
+    bool has_depth, has_stencil;
+
     framebuffer_attachment_handle color_targets[FRAMEBUFFER_MAX_COLOR_TARGETS];
     framebuffer_attachment_handle depth_target;
     framebuffer_attachment_handle stencil_target;
@@ -144,17 +144,8 @@ typedef struct {
     int width, height;
     GLuint fbo;
 
-    bool is_complete;
+    bool is_initialized;
 } framebuffer;
-
-int framebuffer_rebuild_fbo(framebuffer *fb);
-int framebuffer_ensure_attachments(framebuffer *fb);
-void framebuffer_apply_blend_state(framebuffer *fb);
-void framebuffer_apply_load_op(framebuffer *fb);
-void framebuffer_bind_fbo(framebuffer *fb, GLenum target);
-void framebuffer_perform_blit(framebuffer *fb_src, framebuffer *fb_dst, GLbitfield mask, GLenum filter);
-
-void framebuffer_bind_swapchain(GLbitfield GL_clear_bits, float clear_mask[4], float clear_depth);
 
 typedef struct {
     int attachment_index;
@@ -171,7 +162,17 @@ typedef enum {
 // Shaders can write to the render_target's texture using the syntax layout(location = 0) out vec4 color when it is bound
 // targets[i].attachment_index defines the location
 // Since the depth buffer cannot have an attachment index, set targets[target_count - 1].bind_point to INVALID_BIND_POINT
-int framebuffer_init(framebuffer *fb, framebuffer_target_desc *targets, int target_count, framebuffer_depth_mode mode);
-void framebuffer_delete(framebuffer *fb);
+int framebuffer_init(framebuffer *fb, const framebuffer_target_desc *targets, int target_count, framebuffer_depth_mode mode);
+void framebuffer_destroy(framebuffer *fb);
+
+int framebuffer_rebuild_fbo(framebuffer *fb);
+int framebuffer_ensure_attachments(framebuffer *fb);
+void framebuffer_apply_blend_state(framebuffer *fb);
+void framebuffer_apply_load_op(framebuffer *fb);
+void framebuffer_bind_internal_object(framebuffer *fb, GLenum target);
+void framebuffer_blit_to(framebuffer *fb, framebuffer *fb_dst, GLbitfield mask, GLenum filter);
+
+void framebuffer_use(framebuffer *fb);
+void framebuffer_use_swapchain(GLbitfield GL_clear_bits, float clear_color[4], float clear_depth);
 
 #endif
